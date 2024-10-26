@@ -1,0 +1,62 @@
+[package]
+name = "foa"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-net-driver-channel" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-sync" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-executor", features = ["task-arena-size-32768"] }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-time" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-futures" }
+embassy-net = { git = "https://github.com/embassy-rs/embassy.git", package = "embassy-net", features = [
+  "proto-ipv4", 
+  "dhcpv4", 
+  "medium-ethernet", 
+  "tcp", 
+  "udp", 
+  "dns", 
+  "dhcpv4-hostname", 
+  "proto-ipv6"
+] }
+
+esp-hal = { path = "../esp-hal/esp-hal/", features = ["esp32"] }
+esp-alloc = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-alloc" }
+esp-hal-embassy = { path = "../esp-hal/esp-hal-embassy/", package = "esp-hal-embassy", features = [
+    "esp32",
+] }
+esp-backtrace = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-backtrace", features = [
+    "esp32",
+    "panic-handler",
+    "println",
+] }
+esp-println = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-println", features = ["log"] }
+esp32-wifi-hal-rs = { path = "../esp32-wifi-hal-rs/" }
+
+log = "0.4.22"
+heapless = "0.8.0"
+static_cell = "2.1.0"
+
+reqwless = { version = "0.13.0" }
+serde = { version = "1.0.203", default-features = false, features = ["derive"] }
+serde-json-core = "0.5.1"
+embedded-nal-async = "0.8.0"
+
+ieee80211 = { path = "../../rust/ieee80211/" } 
+ethernet = { version = "0.1.4", path = "../../rust/ethernet", default-features = false }
+ether-type = "0.1.3"
+llc = { version = "0.1.0", path = "../../rust/llc" }
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
