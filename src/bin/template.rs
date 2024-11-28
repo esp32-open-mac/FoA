@@ -1,28 +1,22 @@
 #![no_std]
 #![no_main]
-use core::{mem::MaybeUninit, str::from_utf8};
+use core::mem::MaybeUninit;
 
 use embassy_executor::Spawner;
 use embassy_net::{
-    dns::DnsSocket,
-    tcp::client::{TcpClient, TcpClientState},
-    DhcpConfig, Stack, StackResources,
+    dns::{DnsQueryType, DnsSocket},
+    udp::{PacketMetadata, UdpSocket},
+    DhcpConfig, StackResources as NetResources,
 };
 use embassy_time::{Duration, Timer};
-use embedded_nal_async::TcpConnect;
 use esp_backtrace as _;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 
 use esp_alloc as _;
 use esp_println::println;
-use foa::{new, NetDriver, Runner, ScanConfig, ScanMode, State};
+use foa::{ScanConfig, ScanMode, StackResources as WiFiResources};
 use ieee80211::mac_parser::MACAddress;
-use log::{error, info};
-use reqwless::{
-    client::{HttpClient, TlsConfig, TlsVerify},
-    request::Method,
-};
-use serde::Deserialize;
+use rand_core::RngCore;
 
 fn init_heap() {
     const HEAP_SIZE: usize = 32 * 1024;
@@ -45,12 +39,12 @@ macro_rules! mk_static {
     }};
 }
 #[embassy_executor::task]
-async fn wifi_task(wifi_runner: Runner<'static>) -> ! {
+async fn wifi_task(wifi_runner: foa::Runner<'static>) -> ! {
     wifi_runner.run().await
 }
 #[embassy_executor::task]
-async fn net_task(mut stack: embassy_net::Runner<'static, NetDriver<'static>>) -> ! {
-    stack.run().await
+async fn net_task(mut net_runner: embassy_net::Runner<'static, foa::NetDriver<'static>>) -> ! {
+    net_runner.run().await
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -60,42 +54,43 @@ async fn main(spawner: Spawner) {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
-    let state = mk_static!(
-        State,
-        State::new(
-            peripherals.WIFI,
-            peripherals.RADIO_CLK,
-            peripherals.ADC2,
-            Some(MACAddress::new([0x00, 0x80, 0x41, 0x13, 0x37, 0x41])),
-        )
+
+    let mut rng = Rng::new(peripherals.RNG);
+    let mut mac_address = [0u8; 6];
+    rng.fill_bytes(mac_address.as_mut_slice());
+    mac_address[0] &= !(1);
+
+    let state = mk_static!(WiFiResources, WiFiResources::new());
+    let (mut sta_control, runner, net_device) = foa::new(
+        state,
+        peripherals.WIFI,
+        peripherals.RADIO_CLK,
+        peripherals.ADC2,
+        Some(MACAddress::new(mac_address)),
     );
-    let (mut sta_control, runner, net_device) = new(state);
     spawner.spawn(wifi_task(runner)).unwrap();
 
-    let mut hostname = heapless::String::new();
-    let _ = hostname.push_str("FOA");
-    let mut dhcp_config = DhcpConfig::default();
-    dhcp_config.hostname = Some(hostname);
+    let dhcp_config = DhcpConfig::default();
     let config = embassy_net::Config::dhcpv4(dhcp_config);
     let seed = 1234;
 
-    let stack_resources = mk_static!(StackResources<5>, StackResources::new());
+    let stack_resources = mk_static!(NetResources<5>, NetResources::new());
     let (stack, runner) = embassy_net::new(net_device, config, stack_resources, seed);
 
     spawner.spawn(net_task(runner)).unwrap();
 
-    let freifunk = sta_control
+    let ess = sta_control
         .find_ess(
             "OpenWrt",
             ScanConfig {
                 scan_mode: ScanMode::Sweep,
                 ..Default::default()
             },
-            true,
+            false,
         )
         .await
         .unwrap();
-    sta_control.connect(freifunk).await.unwrap();
+    sta_control.connect(ess).await.unwrap();
     loop {
         if stack.is_link_up() {
             break;
@@ -111,62 +106,27 @@ async fn main(spawner: Spawner) {
         }
         Timer::after(Duration::from_millis(500)).await;
     }
+    let dns_socket = DnsSocket::new(stack);
+    let tcp_bin = dns_socket
+        .query("tcpbin.org", DnsQueryType::A)
+        .await
+        .expect("DNS lookup failure")[0];
+    println!("Queried tcpbin.com: {tcp_bin:?}");
+    let endpoint = embassy_net::IpEndpoint {
+        addr: tcp_bin,
+        port: 4242,
+    };
+    let rx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
+    let tx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
+    let rx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
+    let tx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
+    let mut udp_socket = UdpSocket::new(stack, rx_meta, rx_buffer, tx_meta, tx_buffer);
+    println!("Connected to tcpbin.com");
+    udp_socket.bind(endpoint).unwrap();
     loop {
-        let mut rx_buffer = [0; 8192];
-
-        let client_state = TcpClientState::<1, 1024, 1024>::new();
-        let tcp_client = TcpClient::new(stack, &client_state);
-        let dns_client = DnsSocket::new(stack);
-
-        let mut http_client = HttpClient::new(&tcp_client, &dns_client);
-        let url = "http://worldtimeapi.org/api/timezone/Europe/Berlin";
-
-        info!("connecting to {}", &url);
-
-        let mut request = match http_client.request(Method::GET, &url).await {
-            Ok(req) => req,
-            Err(e) => {
-                error!("Failed to make HTTP request: {:?}", e);
-                return; // handle the error
-            }
-        };
-
-        let response = match request.send(&mut rx_buffer).await {
-            Ok(resp) => resp,
-            Err(_e) => {
-                error!("Failed to send HTTP request");
-                return; // handle the error;
-            }
-        };
-
-        let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
-            Ok(b) => b,
-            Err(_e) => {
-                error!("Failed to read response body");
-                return; // handle the error
-            }
-        };
-        info!("Response body: {:?}", &body);
-
-        // parse the response body and update the RTC
-
-        #[derive(Deserialize)]
-        struct ApiResponse<'a> {
-            datetime: &'a str,
-            // other fields as needed
-        }
-
-        let bytes = body.as_bytes();
-        match serde_json_core::de::from_slice::<ApiResponse>(bytes) {
-            Ok((output, _used)) => {
-                info!("Datetime: {:?}", output.datetime);
-            }
-            Err(_e) => {
-                error!("Failed to parse response body");
-                return; // handle the error
-            }
-        }
-
-        Timer::after(Duration::from_secs(5)).await;
+        udp_socket
+            .send_to([0xff; 1].as_slice(), endpoint)
+            .await
+            .unwrap();
     }
 }

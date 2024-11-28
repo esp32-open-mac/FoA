@@ -5,38 +5,47 @@ use alloc::{
     string::{String, ToString},
 };
 use embassy_futures::select::{select, Either};
-use embassy_time::Timer;
-use esp32_wifi_hal_rs::{RxFilterInterface, WiFiRate};
+use embassy_time::{with_timeout, Timer};
+use esp32_wifi_hal_rs::{RxFilterInterface, TxErrorBehaviour, WiFiRate};
 use ieee80211::{
     common::{
-        AssociationID, CapabilitiesInformation, FCFFlags, IEEE80211AuthenticationAlgorithmNumber,
-        IEEE80211StatusCode, SequenceControl,
+        AssociationID, CapabilitiesInformation, IEEE80211AuthenticationAlgorithmNumber,
+        IEEE80211Reason, IEEE80211StatusCode, SequenceControl,
     },
-    control_frame::ControlFrame,
     element_chain,
     elements::SSIDElement,
     mac_parser::{MACAddress, BROADCAST},
     match_frames,
     mgmt_frame::{
-        body::{AssociationRequestBody, AuthenticationBody, ProbeRequestBody},
+        body::{
+            AssociationRequestBody, AuthenticationBody, DeauthenticationBody, ProbeRequestBody,
+        },
         AssociationRequestFrame, AssociationResponseFrame, AuthenticationFrame, BeaconFrame,
-        ManagementFrameHeader, ProbeRequestFrame, ProbeResponseFrame,
+        DeauthenticationFrame, ManagementFrameHeader, ProbeRequestFrame, ProbeResponseFrame,
     },
 };
-use log::{debug, trace};
+use log::debug;
 
 use crate::{
-    lower_mac::LowerMACTransaction, timeout, wait_for_frame, ConnectionState, KnownESS, ScanConfig,
-    ScanMode, StaError, StaResult, State, DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES,
+    lower_mac::{LowerMAC, LowerMACTransaction},
+    wait_for_frame, AssociationState, ConnectionState, ConnectionStateMachine, KnownESS,
+    ScanConfig, ScanMode, StaError, StaResult, DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES,
     RESPONSE_TIMEOUT,
 };
 
 pub struct Control<'a> {
-    state: &'a State,
+    lower_mac: &'a LowerMAC,
+    connection_state_machine: &'a ConnectionStateMachine,
 }
 impl<'a> Control<'a> {
-    pub fn new(state: &'a State) -> Self {
-        Self { state }
+    pub(crate) fn new(
+        lower_mac: &'a LowerMAC,
+        connection_state_machine: &'a ConnectionStateMachine,
+    ) -> Self {
+        Self {
+            lower_mac,
+            connection_state_machine,
+        }
     }
     async fn scan_on_channel(
         lmac_transaction: &LowerMACTransaction<'_>,
@@ -73,7 +82,7 @@ impl<'a> Control<'a> {
         scan_config: ScanConfig<'_>,
         mut callback: impl FnMut(KnownESS),
     ) -> StaResult<()> {
-        let mut lmac_transaction = self.state.lower_mac.transaction_begin().await;
+        let mut lmac_transaction = self.lower_mac.transaction_begin().await;
         debug!("Initiating ESS scan.");
         let mut known_ess = BTreeSet::new();
         let channel_set = match scan_config.scan_mode {
@@ -106,10 +115,10 @@ impl<'a> Control<'a> {
                 ProbeRequestFrame {
                     header: ManagementFrameHeader {
                         receiver_address: BROADCAST,
-                        transmitter_address: self.state.lower_mac.get_mac_address(),
+                        transmitter_address: self.lower_mac.get_mac_address(),
                         bssid: BROADCAST,
                         sequence_control: SequenceControl::new().with_sequence_number(
-                            self.state.lower_mac.get_and_increase_sequence_number(),
+                            self.lower_mac.get_and_increase_sequence_number(),
                         ),
                         ..Default::default()
                     },
@@ -124,10 +133,11 @@ impl<'a> Control<'a> {
                 },
                 buf.as_mut_slice(),
                 WiFiRate::PhyRate6M,
+                TxErrorBehaviour::RetryUntil(4),
             )
             .await?;
 
-        timeout(
+        with_timeout(
             RESPONSE_TIMEOUT,
             wait_for_frame!(
                 lmac_transaction,
@@ -154,6 +164,7 @@ impl<'a> Control<'a> {
             }),
         )
         .await
+        .map_err(|_| StaError::Timeout)
     }
     async fn find_ess_on_channel(
         &mut self,
@@ -188,7 +199,7 @@ impl<'a> Control<'a> {
         scan_config: ScanConfig<'_>,
         hidden: bool,
     ) -> StaResult<KnownESS> {
-        let mut lmac_transaction = self.state.lower_mac.transaction_begin().await;
+        let mut lmac_transaction = self.lower_mac.transaction_begin().await;
         debug!("Searching for ESS: {ssid}");
         let channel_set = match scan_config.scan_mode {
             ScanMode::Sweep => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
@@ -222,9 +233,9 @@ impl<'a> Control<'a> {
                     header: ManagementFrameHeader {
                         receiver_address: ess.bssid,
                         bssid: ess.bssid,
-                        transmitter_address: self.state.lower_mac.get_mac_address(),
+                        transmitter_address: self.lower_mac.get_mac_address(),
                         sequence_control: SequenceControl::new().with_sequence_number(
-                            self.state.lower_mac.get_and_increase_sequence_number(),
+                            self.lower_mac.get_and_increase_sequence_number(),
                         ),
                         ..Default::default()
                     },
@@ -239,10 +250,11 @@ impl<'a> Control<'a> {
                 },
                 buf.as_mut_slice(),
                 WiFiRate::PhyRate6M,
+                TxErrorBehaviour::RetryUntil(4),
             )
             .await?;
         debug!("Transmitted authentication frame to {}", ess.bssid);
-        timeout(
+        with_timeout(
             RESPONSE_TIMEOUT,
             wait_for_frame!(lmac_transaction, AuthenticationFrame, auth_frame => {
                 debug!("Received authentication frame from {}, with status code: {:?}.", ess.bssid, auth_frame.status_code);
@@ -253,7 +265,8 @@ impl<'a> Control<'a> {
                 }
             }),
         )
-        .await?
+        .await
+        .map_err(|_| StaError::Timeout)?
     }
     async fn associate(
         &mut self,
@@ -267,9 +280,9 @@ impl<'a> Control<'a> {
                     header: ManagementFrameHeader {
                         receiver_address: ess.bssid,
                         bssid: ess.bssid,
-                        transmitter_address: self.state.lower_mac.get_mac_address(),
+                        transmitter_address: self.lower_mac.get_mac_address(),
                         sequence_control: SequenceControl::new().with_sequence_number(
-                            self.state.lower_mac.get_and_increase_sequence_number(),
+                            self.lower_mac.get_and_increase_sequence_number(),
                         ),
                         ..Default::default()
                     },
@@ -286,11 +299,12 @@ impl<'a> Control<'a> {
                 },
                 buf.as_mut_slice(),
                 WiFiRate::PhyRate6M,
+                TxErrorBehaviour::RetryUntil(4),
             )
             .await?;
         debug!("Transmitted association frame to {}", ess.bssid);
 
-        timeout(
+        with_timeout(
             RESPONSE_TIMEOUT,
             wait_for_frame!(
                 lmac_transaction,
@@ -305,10 +319,14 @@ impl<'a> Control<'a> {
                 }
             ),
         )
-        .await?
+        .await        
+        .map_err(|_| StaError::Timeout)?
     }
     pub async fn connect(&mut self, ess: KnownESS) -> StaResult<()> {
-        let mut lmac_transaction = self.state.lower_mac.transaction_begin().await;
+        if self.connection_state_machine.is_connected().await {
+            return Err(StaError::AlreadyConnected);
+        }
+        let mut lmac_transaction = self.lower_mac.transaction_begin().await;
         lmac_transaction.disable_rollback();
         debug!("Initiating connection to {}", ess.bssid);
         let _ = lmac_transaction.get_wifi_mut().set_channel(ess.channel);
@@ -316,9 +334,60 @@ impl<'a> Control<'a> {
         debug!("Successfully authenticated.");
         let assoc_id = self.associate(&lmac_transaction, &ess).await?;
         debug!("Successfully associated. Got AID: {}", assoc_id.aid());
-        self.state
-            .state_signal
-            .signal(ConnectionState::Associated(ess.bssid));
+        self.connection_state_machine
+            .set_state(ConnectionState::Connected(AssociationState {
+                ap_address: ess.bssid,
+            }))
+            .await;
         Ok(())
+    }
+    pub async fn deauthenticate(
+        &self,
+        lmac_transaction: &LowerMACTransaction<'_>,
+        bssid: MACAddress,
+    ) -> StaResult<()> {
+        let mut buf = [0x00u8; 150];
+        lmac_transaction
+            .transmit(
+                DeauthenticationFrame {
+                    header: ManagementFrameHeader {
+                        receiver_address: bssid,
+                        bssid,
+                        transmitter_address: self.lower_mac.get_mac_address(),
+                        sequence_control: SequenceControl::new().with_sequence_number(
+                            self.lower_mac.get_and_increase_sequence_number(),
+                        ),
+                        ..Default::default()
+                    },
+                    body: DeauthenticationBody {
+                        reason: IEEE80211Reason::LeavingNetworkDeauth,
+                        elements: element_chain! {},
+                        _phantom: PhantomData,
+                    },
+                },
+                buf.as_mut_slice(),
+                WiFiRate::PhyRate6M,
+                TxErrorBehaviour::RetryUntil(4),
+            )
+            .await?;
+        Ok(())
+    }
+    pub async fn disconnect(&mut self) -> StaResult<()> {
+        let Some(association_state) = self.connection_state_machine.get_association_state().await
+        else {
+            return Err(StaError::NotConnected);
+        };
+        let lmac_transaction = self.lower_mac.transaction_begin().await;
+        debug!("Disconnecting from {}.", association_state.ap_address);
+        self.deauthenticate(&lmac_transaction, association_state.ap_address)
+            .await?;
+        self.connection_state_machine
+            .set_state(ConnectionState::Disconnected)
+            .await;
+        Ok(())
+    }
+    #[cfg(feature = "lmac_access")]
+    pub fn get_lmac(&self) -> &LowerMAC {
+        self.lower_mac
     }
 }

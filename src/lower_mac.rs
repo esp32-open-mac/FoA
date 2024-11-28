@@ -1,19 +1,18 @@
 use core::{
     cell::UnsafeCell,
-    future::Future,
     sync::atomic::{AtomicU16, Ordering},
 };
 
-use embassy_futures::{
-    select::{select, Either},
-    yield_now,
-};
+use embassy_futures::select::{select, Either};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
+    blocking_mutex::raw::NoopRawMutex,
+    mutex::{Mutex, MutexGuard},
     semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser},
     signal::Signal,
 };
-use esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, RxFilterInterface, WiFi, WiFiRate};
+use esp32_wifi_hal_rs::{
+    BorrowedBuffer, DMAResources, RxFilterBank, RxFilterInterface, TxErrorBehaviour, WiFi, WiFiRate,
+};
 use esp_hal::{
     efuse::Efuse,
     peripherals::{ADC2, RADIO_CLK, WIFI},
@@ -21,25 +20,53 @@ use esp_hal::{
 use ieee80211::{
     mac_parser::MACAddress,
     scroll::{self, ctx::TryIntoCtx, Pwrite},
+    IEEE80211Frame,
 };
 use log::debug;
 
 use crate::{StaError, StaResult};
 
+type DefaultRawMutex = NoopRawMutex;
+type RxMutex = Mutex<DefaultRawMutex, ()>;
+type RxTicket<'a> = MutexGuard<'a, DefaultRawMutex, ()>;
+const TX_TICKET_COUNT: usize = super::LMAC_ACCESSORS_COUNT + 1;
+type TxSemaphore = FairSemaphore<DefaultRawMutex, TX_TICKET_COUNT>;
+type TxTicket<'a> = SemaphoreReleaser<'a, TxSemaphore>;
+
+async fn tx_typed(
+    _tx_ticket: &TxTicket<'_>,
+    wifi: &WiFi,
+    frame: impl IEEE80211Frame + TryIntoCtx<bool, Error = scroll::Error>,
+    buf: &mut [u8],
+    rate: WiFiRate,
+    error_behaviour: TxErrorBehaviour,
+) -> StaResult<usize> {
+    let written = buf
+        .pwrite_with(frame, 0, true)
+        .map_err(StaError::SerializationError)?;
+    wifi.transmit(&buf[..written], rate, error_behaviour)
+        .await
+        .map_err(StaError::MACError)?;
+    Ok(written)
+}
+
 pub struct LowerMACTransaction<'a> {
     lower_mac: &'a LowerMAC,
-    _permit: SemaphoreReleaser<'a, FairSemaphore<CriticalSectionRawMutex, 2>>,
+    _rx_ticket: RxTicket<'a>,
+    _tx_ticket: TxTicket<'a>,
     previous_channel: u8,
     rollback: bool,
 }
 impl<'a> LowerMACTransaction<'a> {
-    pub fn new(
+    pub(crate) fn new(
         lower_mac: &'a LowerMAC,
-        _permit: SemaphoreReleaser<'a, FairSemaphore<CriticalSectionRawMutex, 2>>,
+        _rx_ticket: RxTicket<'a>,
+        _tx_ticket: TxTicket<'a>,
     ) -> Self {
         Self {
             lower_mac,
-            _permit,
+            _rx_ticket,
+            _tx_ticket,
             previous_channel: unsafe { lower_mac.wifi.get().as_ref().unwrap().get_channel() },
             rollback: true,
         }
@@ -61,23 +88,22 @@ impl<'a> LowerMACTransaction<'a> {
         frame: impl TryIntoCtx<bool, Error = scroll::Error>,
         buf: &mut [u8],
         rate: WiFiRate,
-    ) -> StaResult<()> {
+        error_behaviour: TxErrorBehaviour,
+    ) -> StaResult<usize> {
         let written = buf
             .pwrite_with(frame, 0, true)
             .map_err(StaError::SerializationError)?;
-        self.get_wifi().transmit(&buf[..written], rate).await;
-        Ok(())
+        self.get_wifi()
+            .transmit(&buf[..written], rate, error_behaviour)
+            .await
+            .map_err(StaError::MACError)?;
+        Ok(written)
     }
     pub fn set_channel(&self, channel: u8) {
-        unsafe {
-            self.lower_mac
-                .wifi
-                .get()
-                .as_mut()
-                .unwrap()
-                .set_channel(channel)
-                .unwrap()
-        }
+        unsafe { self.lower_mac.wifi.get().as_mut() }
+            .unwrap()
+            .set_channel(channel)
+            .unwrap()
     }
 }
 impl Drop for LowerMACTransaction<'_> {
@@ -91,6 +117,12 @@ impl Drop for LowerMACTransaction<'_> {
         }
     }
 }
+
+pub struct LowerMACExclusiveTX<'a> {
+    lower_mac: &'a LowerMAC,
+    _tx_ticket: TxTicket<'a>,
+}
+
 /// The lower MAC is concerned with sharing access to the WiFi peripheral,
 /// between the background task and the user facing control.
 ///
@@ -101,8 +133,9 @@ impl Drop for LowerMACTransaction<'_> {
 /// [Self::transaction_begin].
 pub struct LowerMAC {
     wifi: UnsafeCell<WiFi>,
-    transaction_pending: Signal<CriticalSectionRawMutex, bool>,
-    access_semaphore: FairSemaphore<CriticalSectionRawMutex, 2>,
+    transaction_pending: Signal<DefaultRawMutex, bool>,
+    receive_access: RxMutex,
+    transmit_access: TxSemaphore,
     sequence_number: AtomicU16,
     mac_address: MACAddress,
 }
@@ -112,9 +145,10 @@ impl LowerMAC {
         radio_clock: RADIO_CLK,
         adc2: ADC2,
         mac_address: Option<MACAddress>,
+        dma_resources: &'static mut DMAResources<1600, 10>,
     ) -> Self {
-        let mut wifi = WiFi::new(wifi, radio_clock, adc2);
         let mac_address = mac_address.unwrap_or(MACAddress::new(Efuse::get_mac_address()));
+        let mut wifi = WiFi::new(wifi, radio_clock, adc2, dma_resources);
         wifi.set_filter(
             RxFilterBank::ReceiverAddress,
             RxFilterInterface::Zero,
@@ -126,7 +160,8 @@ impl LowerMAC {
         Self {
             wifi: UnsafeCell::new(wifi),
             transaction_pending: Signal::new(),
-            access_semaphore: FairSemaphore::new(1),
+            receive_access: RxMutex::new(()),
+            transmit_access: TxSemaphore::new(TX_TICKET_COUNT),
             sequence_number: AtomicU16::new(0),
             mac_address,
         }
@@ -140,7 +175,7 @@ impl LowerMAC {
     /// Wait for a frame to arrive outside of a transaction.
     pub async fn receive(&self) -> BorrowedBuffer<'_, '_> {
         loop {
-            let _permit = self.access_semaphore.acquire(1).await.unwrap();
+            let _receive_access = self.receive_access.lock().await;
             match select(
                 unsafe { self.wifi.get().as_mut().unwrap() }.receive(),
                 self.transaction_pending.wait(),
@@ -158,20 +193,27 @@ impl LowerMAC {
         frame: impl TryIntoCtx<bool, Error = scroll::Error>,
         buf: &mut [u8],
         rate: WiFiRate,
-    ) -> StaResult<()> {
-        let _permit = self.access_semaphore.acquire(1).await.unwrap();
+        error_behaviour: TxErrorBehaviour,
+    ) -> StaResult<usize> {
+        let _permit = self.transmit_access.acquire(1).await.unwrap();
         let written = buf
             .pwrite_with(frame, 0, true)
             .map_err(StaError::SerializationError)?;
         unsafe { self.wifi.get().as_mut().unwrap() }
-            .transmit(&buf[..written], rate)
-            .await;
-        Ok(())
+            .transmit(&buf[..written], rate, error_behaviour)
+            .await
+            .map_err(StaError::MACError)?;
+        Ok(written)
     }
     /// Begin a transaction.
     pub async fn transaction_begin(&self) -> LowerMACTransaction<'_> {
         self.transaction_pending.signal(true);
-        let permit = self.access_semaphore.acquire(1).await.unwrap();
-        LowerMACTransaction::new(self, permit)
+        let receive_access = self.receive_access.lock().await;
+        let transmit_access = self
+            .transmit_access
+            .acquire_all(TX_TICKET_COUNT)
+            .await
+            .unwrap();
+        LowerMACTransaction::new(self, receive_access, transmit_access)
     }
 }
