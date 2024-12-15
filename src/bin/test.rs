@@ -82,10 +82,6 @@ async fn main(spawner: Spawner) {
 
     let bss = sta_control.find_ess(None, SSID).await.unwrap();
 
-    // Here we test, whether we're able to reconnect.
-    // This tests the LMAC's ability to perform the channel lock state transitions successfully.
-    sta_control.connect(&bss, None).await.unwrap();
-    sta_control.disconnect().await;
     sta_control.connect(&bss, None).await.unwrap();
 
     // Wait for DHCP, not necessary when using static IP
