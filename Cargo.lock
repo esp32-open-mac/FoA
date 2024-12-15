@@ -624,6 +624,7 @@ dependencies = [
 [[package]]
 name = "esp32-wifi-hal-rs"
 version = "0.1.0"
+source = "git+https://github.com/esp32-open-mac/esp32-wifi-hal-rs#f36474765df6f7753563d7b1896e35d534481257"
 dependencies = [
  "atomic-waker",
  "bitfield-struct",
@@ -655,6 +656,7 @@ dependencies = [
 [[package]]
 name = "ethernet"
 version = "0.1.4"
+source = "git+https://github.com/Frostie314159/ethernet#ae915831d923f91ccabb4ccd996a26876edbfab5"
 dependencies = [
  "ether-type",
  "mac-parser",
@@ -869,6 +871,7 @@ dependencies = [
 [[package]]
 name = "llc"
 version = "0.1.0"
+source = "git+https://github.com/Frostie314159/llc-rs#a72f85da7e64be251eaeff255258fe47d4ff6228"
 dependencies = [
  "ether-type",
  "macro-bits",
