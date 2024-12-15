@@ -7,7 +7,6 @@ edition = "2021"
 embassy-sync = "0.6.0"
 embassy-executor = { version = "0.6.1", features = ["task-arena-size-32768"] }
 embassy-net-driver-channel = "0.3.0"
-embassy-net = { version = "0.5.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
 embassy-time = "0.3.2"
 
 esp-hal = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-hal", features = ["esp32"] }
@@ -35,6 +34,7 @@ llc = { version = "0.1.0", path = "../../rust/llc" }
 critical-section = "1.2.0"
 embassy-futures = "0.1.1"
 rand_core = "0.6.4"
+embassy-net = { version = "0.5.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
