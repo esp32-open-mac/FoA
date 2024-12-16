@@ -82,6 +82,10 @@ async fn main(spawner: Spawner) {
 
     let bss = sta_control.find_ess(None, SSID).await.unwrap();
 
+    sta_control
+        .set_mac_address([0x00, 0x80, 0x41, 0x13, 0x37, 0x42])
+        .await
+        .unwrap();
     sta_control.connect(&bss, None).await.unwrap();
 
     // Wait for DHCP, not necessary when using static IP

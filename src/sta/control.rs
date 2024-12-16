@@ -3,7 +3,7 @@
 use core::{marker::PhantomData, str::FromStr};
 
 use embassy_time::{with_timeout, Duration};
-use esp32_wifi_hal_rs::{BorrowedBuffer, TxErrorBehaviour, WiFiRate};
+use esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour, WiFiRate};
 use ieee80211::{
     common::{
         AssociationID, CapabilitiesInformation, IEEE80211AuthenticationAlgorithmNumber,
@@ -297,6 +297,24 @@ impl ConnectionOperation<'_, '_> {
             .set_and_lock_channel(bss.channel)
             .await
             .map_err(StaError::LMacError)?;
+        // Just to make sure, these are set for connection.
+        self.sta_control.interface_control.set_filter_parameters(
+            RxFilterBank::ReceiverAddress,
+            *self.sta_control.mac_address,
+            None,
+        );
+        self.sta_control
+            .interface_control
+            .set_filter_status(RxFilterBank::ReceiverAddress, true);
+        self.sta_control.interface_control.set_filter_parameters(
+            RxFilterBank::BSSID,
+            *bss.bssid,
+            None,
+        );
+        self.sta_control
+            .interface_control
+            .set_filter_status(RxFilterBank::BSSID, false);
+
         self.do_auth(bss, timeout).await?;
         let aid = self.do_assoc(bss, timeout).await?;
 
@@ -336,7 +354,7 @@ impl<'res> StaControl<'res> {
     }
 
     /// Set the MAC address for the STA interface.
-    pub async fn set_mac_address(&mut self, mac_address: MACAddress) -> Result<(), StaError> {
+    pub async fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
         if self
             .connection_state_subscriber
             .is_connected()
@@ -345,7 +363,7 @@ impl<'res> StaControl<'res> {
         {
             Err(StaError::StillConnected)
         } else {
-            self.mac_address = mac_address;
+            self.mac_address = MACAddress::new(mac_address);
             Ok(())
         }
     }

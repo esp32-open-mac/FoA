@@ -519,10 +519,6 @@ impl Interface for StaInterface {
         sta_shared_state.interface_control = Some(interface_control);
         let interface_control = sta_shared_state.interface_control.as_ref().unwrap();
 
-        // Setup the filtering with the default address.
-        interface_control.set_filter_parameters(RxFilterBank::ReceiverAddress, mac_address, None);
-        interface_control.set_filter_status(RxFilterBank::ReceiverAddress, true);
-
         // Initialize embassy_net.
         let (net_runner, net_device) = ch::new(
             &mut sta_shared_state.channel_state,

@@ -91,9 +91,9 @@ pub async fn new_with_multiple_interfaces<'res, IfZero: Interface, IfOne: Interf
     )
     .await;
 
-    // The MAC address for the second interface is the same as the first interface, only with one
+    // The MAC address for the second interface is the same as the first interface, only with two
     // added to the first octet.
-    mac_address[0] += 1;
+    mac_address[5] += 2;
     let (if_one_control, if_one_runner, if_one_input) = IfOne::new(
         &mut resources.if_one_resources,
         if_one_init_info,
