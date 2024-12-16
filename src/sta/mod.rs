@@ -372,7 +372,7 @@ impl StaRunner<'_> {
 }
 impl InterfaceRunner for StaRunner<'_> {
     /// Run the station interface.
-    async fn run(mut self) -> ! {
+    async fn run(&mut self) -> ! {
         debug!("STA runner active.");
         let connection_state_subscriber = self.connection_state_subscriber.take().unwrap();
         loop {

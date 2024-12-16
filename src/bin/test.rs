@@ -29,7 +29,7 @@ macro_rules! mk_static {
 const SSID: &str = "OpenWrt"; // My test router.
 
 #[embassy_executor::task]
-async fn wifi_task(wifi_runner: SingleInterfaceRunner<'static, StaInterface>) -> ! {
+async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>) -> ! {
     wifi_runner.run().await
 }
 #[embassy_executor::task]

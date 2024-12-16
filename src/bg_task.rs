@@ -17,9 +17,9 @@ use crate::{
 ///
 /// This is independent of the number of interfaces being used.
 async fn run_internal<'res>(
-    mut receive_endpoint: LMacReceiveEndpoint<'res>,
-    mut if_zero_input: impl InterfaceInput<'res>,
-    mut if_one_input: Option<impl InterfaceInput<'res>>,
+    receive_endpoint: &mut LMacReceiveEndpoint<'res>,
+    if_zero_input: &mut impl InterfaceInput<'res>,
+    mut if_one_input: Option<&mut impl InterfaceInput<'res>>,
 ) -> ! {
     debug!("FoA MAC runner active.");
     loop {
@@ -34,7 +34,7 @@ async fn run_internal<'res>(
                 }
             }
             _ => {
-                // If we got here, we have different problems.
+                // I don't know yet, how to handle this.
             }
         };
     }
@@ -47,9 +47,13 @@ pub struct SingleInterfaceRunner<'res, If: Interface> {
 }
 impl<If: Interface> SingleInterfaceRunner<'_, If> {
     /// Run the background task with two interfaces.
-    pub async fn run(self) -> ! {
+    pub async fn run(&mut self) -> ! {
         join(
-            run_internal(self.receive_endpoint, self.if_input, None::<()>),
+            run_internal(
+                &mut self.receive_endpoint,
+                &mut self.if_input,
+                None::<&mut ()>,
+            ),
             self.if_runner.run(),
         )
         .await;
@@ -65,12 +69,12 @@ pub struct MultiInterfaceRunner<'res, IfZero: Interface, IfOne: Interface> {
 }
 impl<IfZero: Interface, IfOne: Interface> MultiInterfaceRunner<'_, IfZero, IfOne> {
     /// Run the background task, with two interfaces.
-    pub async fn run(self) -> ! {
+    pub async fn run(&mut self) -> ! {
         join3(
             run_internal(
-                self.receive_endpoint,
-                self.if_zero_input,
-                Some(self.if_one_input),
+                &mut self.receive_endpoint,
+                &mut self.if_zero_input,
+                Some(&mut self.if_one_input),
             ),
             self.if_zero_runner.run(),
             self.if_one_runner.run(),

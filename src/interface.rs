@@ -15,7 +15,7 @@ use crate::lmac::{LMacInterfaceControl, LMacTransmitEndpoint};
 /// The background runner for the interface.
 pub trait InterfaceRunner {
     /// Run the background task for the interface.
-    async fn run(self) -> !;
+    async fn run(&mut self) -> !;
 }
 /// The interface input for the input.
 pub trait InterfaceInput<'res> {
