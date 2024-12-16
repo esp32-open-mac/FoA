@@ -28,7 +28,7 @@ use log::debug;
 
 use crate::{
     lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
-    sta::AUTHENTICATING,
+    sta::{AUTHENTICATING, DEFAULT_PHY_RATE},
 };
 
 use super::{
@@ -192,7 +192,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit_endpoint
             .transmit(
                 &tx_buffer[..written + 4],
-                WiFiRate::PhyRate6M,
+                DEFAULT_PHY_RATE,
                 TxErrorBehaviour::Drop,
             )
             .await;
@@ -260,7 +260,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit_endpoint
             .transmit(
                 &tx_buffer[..written + 4],
-                WiFiRate::PhyRate6M,
+                DEFAULT_PHY_RATE,
                 TxErrorBehaviour::Drop,
             )
             .await;

@@ -94,6 +94,7 @@ pub(crate) const AUTHENTICATING: usize = 2;
 pub(crate) const ASSOCIATING: usize = 3;
 
 pub const MTU: usize = 1514;
+pub(crate) const DEFAULT_PHY_RATE: WiFiRate = WiFiRate::PhyRate9M;
 
 /// RX management for the STA interface.
 pub(crate) struct StaRxManagement<'res> {
@@ -288,7 +289,7 @@ impl StaRunner<'_> {
         let _ = transmit_endpoint
             .transmit(
                 &tx_buf[..written + 4],
-                WiFiRate::PhyRate9M,
+                DEFAULT_PHY_RATE,
                 TxErrorBehaviour::Drop,
             )
             .await;
