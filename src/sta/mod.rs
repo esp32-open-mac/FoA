@@ -427,8 +427,9 @@ impl StaInput<'_> {
         let Ok(llc_payload) = payload.pread::<SnapLlcFrame>(0) else {
             return;
         };
-        // TODO: Maybe this shouldn't wait, since we could stall the LMAC that way.
-        let rx_buf = rx_runner.rx_buf().await;
+        let Some(rx_buf) = rx_runner.try_rx_buf() else {
+            return;
+        };
         let Ok(written) = rx_buf.pwrite(
             Ethernet2Frame {
                 header: Ethernet2Header {
