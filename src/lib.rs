@@ -28,8 +28,8 @@ pub struct FoAStackResources<'a, IfZeroResources: Default, IfOneResources: Defau
     if_zero_resources: IfZeroResources,
     if_one_resources: IfOneResources,
 }
-impl<'res, IfZeroResources: Default, IfOneResources: Default>
-    FoAStackResources<'res, IfZeroResources, IfOneResources>
+impl<IfZeroResources: Default, IfOneResources: Default>
+    FoAStackResources<'_, IfZeroResources, IfOneResources>
 {
     pub fn new() -> Self {
         Self {
@@ -42,8 +42,8 @@ impl<'res, IfZeroResources: Default, IfOneResources: Default>
         }
     }
 }
-impl<'res, IfZeroResources: Default, IfOneResources: Default> Default
-    for FoAStackResources<'res, IfZeroResources, IfOneResources>
+impl<IfZeroResources: Default, IfOneResources: Default> Default
+    for FoAStackResources<'_, IfZeroResources, IfOneResources>
 {
     fn default() -> Self {
         Self::new()
@@ -65,7 +65,7 @@ pub async fn new_with_multiple_interfaces<'res, IfZero: Interface, IfOne: Interf
 ) -> (
     IfZero::ControlType<'res>,
     IfOne::ControlType<'res>,
-    MultiInterfaceRunner<IfZero, IfOne>,
+    MultiInterfaceRunner<'res, IfZero, IfOne>,
 ) {
     resources.shared_lmac_state = Some(SharedLMacState::new(WiFi::new(
         wifi,
@@ -81,7 +81,7 @@ pub async fn new_with_multiple_interfaces<'res, IfZero: Interface, IfOne: Interf
             .as_mut()
             .unwrap()
             .split(tx_buffer_manager.dyn_tx_buffer_manager());
-    let mut mac_address = Efuse::get_mac_address();
+    let mut mac_address = Efuse::read_base_mac_address();
     let (if_zero_control, if_zero_runner, if_zero_input) = IfZero::new(
         &mut resources.if_zero_resources,
         if_zero_init_info,
@@ -147,7 +147,7 @@ pub async fn new_with_single_interface<'res, If: Interface>(
         if_init_info,
         transmit_endpoint,
         if_zero_lmac_control,
-        Efuse::get_mac_address(),
+        Efuse::read_base_mac_address(),
     )
     .await;
     debug!("Initialized Wi-Fi stack with {} interface.", If::NAME);

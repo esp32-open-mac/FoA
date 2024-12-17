@@ -377,6 +377,8 @@ impl InterfaceRunner for StaRunner<'_> {
         let connection_state_subscriber = self.connection_state_subscriber.take().unwrap();
         loop {
             let connection_info = connection_state_subscriber.wait_for_connection().await;
+            self.state_runner
+                .set_hardware_address(HardwareAddress::Ethernet(*connection_info.own_address));
             self.state_runner.set_link_state(LinkState::Up);
             debug!("Link went up.");
             // At this point, the channel will have been locked, so we'll only receive off channel
@@ -428,6 +430,7 @@ impl StaInput<'_> {
             return;
         };
         let Some(rx_buf) = rx_runner.try_rx_buf() else {
+            debug!("Dropping MSDU, because no buffers are available.");
             return;
         };
         let Ok(written) = rx_buf.pwrite(

@@ -245,7 +245,7 @@ pub struct OffChannelOperation<'a, 'res> {
     previous_channel: u8,
     rx_filter_interface: RxFilterInterface,
 }
-impl<'a, 'res> OffChannelOperation<'a, 'res> {
+impl OffChannelOperation<'_, '_> {
     /// Set the channel.
     pub fn set_channel(&mut self, channel: u8) -> Result<(), LMacError> {
         unsafe {
@@ -391,6 +391,10 @@ impl LMacInterfaceControl<'_> {
             mac_address,
             mask.unwrap_or([0xff; 6]),
         );
+        unsafe {
+            let reg = (0x3ff730d8 + self.rx_filter_interface.into_bits() as u32 * 4) as *mut u32;
+            reg.write_volatile(reg.read_volatile() | 2);
+        }
     }
     /// Set the filter status.
     ///

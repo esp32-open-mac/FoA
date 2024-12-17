@@ -9,17 +9,17 @@ embassy-executor = { version = "0.6.1", features = ["task-arena-size-32768"] }
 embassy-net-driver-channel = "0.3.0"
 embassy-time = "0.3.2"
 
-esp-hal = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-hal", features = ["esp32"] }
-esp-alloc = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-alloc" }
-esp-hal-embassy = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-hal-embassy", features = [
+esp-hal = { git = "https://github.com/esp-rs/esp-hal", package = "esp-hal", features = ["esp32"] }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal", package = "esp-alloc" }
+esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", package = "esp-hal-embassy", features = [
     "esp32",
 ] }
-esp-backtrace = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-backtrace", features = [
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", package = "esp-backtrace", features = [
     "esp32",
     "panic-handler",
     "println",
 ] }
-esp-println = { git = "https://github.com/esp32-open-mac/esp-hal", package = "esp-println", features = ["log"] }
+esp-println = { git = "https://github.com/esp-rs/esp-hal", package = "esp-println", features = ["log"] }
 esp32-wifi-hal-rs = { git = "https://github.com/esp32-open-mac/esp32-wifi-hal-rs", features = ["log"] }
 
 log = "0.4.22"

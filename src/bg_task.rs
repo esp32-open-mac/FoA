@@ -33,7 +33,8 @@ async fn run_internal<'res>(
                     if_one_input.interface_input(received).await;
                 }
             }
-            _ => {
+            (if_zero, if_one) => {
+                debug!("Received frame for interface zero: {if_zero}, interface one: {if_one}");
                 // I don't know yet, how to handle this.
             }
         };

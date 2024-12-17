@@ -9,13 +9,14 @@ use embassy_net::{
 };
 use embassy_time::Timer;
 use esp_backtrace as _;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use foa::{
     bg_task::SingleInterfaceRunner,
     sta::{control::BSS, StaInitInfo, StaInterface, StaNetDevice, StaSharedResources},
     FoAStackResources,
 };
 use log::info;
+use rand_core::RngCore;
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -26,7 +27,7 @@ macro_rules! mk_static {
     }};
 }
 
-const SSID: &str = "OpenWrt"; // My test router.
+const SSID: &str = "Freifunk"; // My test router.
 
 #[embassy_executor::task]
 async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>) -> ! {
@@ -81,11 +82,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(net_runner)).unwrap();
 
     let bss = sta_control.find_ess(None, SSID).await.unwrap();
+    let mut mac_address = [0u8; 6];
+    Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
 
-    sta_control
-        .set_mac_address([0x00, 0x80, 0x41, 0x13, 0x37, 0x42])
-        .await
-        .unwrap();
+    // sta_control.set_mac_address(mac_address).await.unwrap();
     sta_control.connect(&bss, None).await.unwrap();
 
     // Wait for DHCP, not necessary when using static IP

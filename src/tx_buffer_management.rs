@@ -32,18 +32,18 @@ pub struct TxBuffer<'res> {
     /// A sender to the buffer queue.
     sender: channel::DynamicSender<'res, *mut [u8]>,
 }
-impl<'res> Deref for TxBuffer<'res> {
+impl Deref for TxBuffer<'_> {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
         unsafe { self.buffer.as_ref() }.unwrap()
     }
 }
-impl<'res> DerefMut for TxBuffer<'res> {
+impl DerefMut for TxBuffer<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.buffer.as_mut() }.unwrap()
     }
 }
-impl<'res> Drop for TxBuffer<'res> {
+impl Drop for TxBuffer<'_> {
     fn drop(&mut self) {
         // We ignore the result here, since this can't fail, because we previously took this buffer
         // out from the queue, so the [free_capacity](channel::Channel::free_capacity) is always

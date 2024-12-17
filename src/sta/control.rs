@@ -198,9 +198,11 @@ impl ConnectionOperation<'_, '_> {
             .await;
         // Due to the user operation being set to authenticating, we'll only receive authentication
         // frames.
-        let response = with_timeout(timeout, self.sta_control.rx_from_user_queue())
-            .await
-            .map_err(|_| StaError::Timeout)?;
+        let Ok(response) = with_timeout(timeout, self.sta_control.rx_from_user_queue()).await
+        else {
+            debug!("Authentication timed out.");
+            return Err(StaError::Timeout);
+        };
         let Ok(auth_frame) = response.mpdu_buffer().pread::<AuthenticationFrame>(0) else {
             debug!(
                 "Failed to authenticate with {}, frame deserialization failed.",
@@ -264,9 +266,11 @@ impl ConnectionOperation<'_, '_> {
                 TxErrorBehaviour::Drop,
             )
             .await;
-        let received = with_timeout(timeout, self.sta_control.rx_from_user_queue())
-            .await
-            .map_err(|_| StaError::Timeout)?;
+        let Ok(received) = with_timeout(timeout, self.sta_control.rx_from_user_queue()).await
+        else {
+            debug!("Association timed out.");
+            return Err(StaError::Timeout);
+        };
         let Ok(assoc_response) = received
             .mpdu_buffer()
             .pread_with::<AssociationResponseFrame>(0, false)
@@ -297,6 +301,7 @@ impl ConnectionOperation<'_, '_> {
             .set_and_lock_channel(bss.channel)
             .await
             .map_err(StaError::LMacError)?;
+
         // Just to make sure, these are set for connection.
         self.sta_control.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
@@ -313,7 +318,7 @@ impl ConnectionOperation<'_, '_> {
         );
         self.sta_control
             .interface_control
-            .set_filter_status(RxFilterBank::BSSID, false);
+            .set_filter_status(RxFilterBank::BSSID, true);
 
         self.do_auth(bss, timeout).await?;
         let aid = self.do_assoc(bss, timeout).await?;
