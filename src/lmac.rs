@@ -391,10 +391,6 @@ impl LMacInterfaceControl<'_> {
             mac_address,
             mask.unwrap_or([0xff; 6]),
         );
-        unsafe {
-            let reg = (0x3ff730d8 + self.rx_filter_interface.into_bits() as u32 * 4) as *mut u32;
-            reg.write_volatile(reg.read_volatile() | 2);
-        }
     }
     /// Set the filter status.
     ///
