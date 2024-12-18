@@ -5,7 +5,7 @@
 //! the interface. And the interface input, which is used by the background task, to pass received
 //! frames on to the interface.
 //! Typically a set of queues would be used, to pass the [BorrowedBuffer]s from the interface input
-//! to the background task or user control. For an example see the [STA interface](crate::sta).
+//! to the background task or user control. For an example see the `foa_sta`.
 use core::future::Future;
 
 use esp32_wifi_hal_rs::BorrowedBuffer;
@@ -33,8 +33,7 @@ impl<'res> InterfaceInput<'res> for () {
 }
 /// The interface itself.
 ///
-/// This is usually a dummy type, which just represents this interface. See
-/// [StaInterface](crate::sta::StaInterface).
+/// This is usually a dummy type, which just represents this interface.
 pub trait Interface {
     /// The name of the interface.
     const NAME: &str;

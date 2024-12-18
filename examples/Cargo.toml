@@ -17,7 +17,7 @@ esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", package = "esp-back
 esp-println = { git = "https://github.com/esp-rs/esp-hal", package = "esp-println", features = ["log"] }
 static_cell = "2.1.0"
 embassy-net = { version = "0.5.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
-embassy-executor = "0.6.3"
+embassy-executor = { version = "0.6.3", features = ["task-arena-size-32768"] }
 embassy-time = "0.3.2"
 foa = { version = "0.1.0", path = "../foa" }
 rand_core = "0.6.4"

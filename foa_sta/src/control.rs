@@ -190,7 +190,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit(
                 &tx_buffer[..written + 4],
                 DEFAULT_PHY_RATE,
-                TxErrorBehaviour::Drop,
+                TxErrorBehaviour::RetryUntil(4),
             )
             .await;
         // Due to the user operation being set to authenticating, we'll only receive authentication
@@ -260,7 +260,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit(
                 &tx_buffer[..written + 4],
                 DEFAULT_PHY_RATE,
-                TxErrorBehaviour::Drop,
+                TxErrorBehaviour::RetryUntil(4),
             )
             .await;
         let Ok(received) = with_timeout(timeout, self.sta_control.rx_from_user_queue()).await

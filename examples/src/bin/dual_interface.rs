@@ -19,8 +19,8 @@ use foa_sta::{StaInitInfo, StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
 
-const SSID_ZERO: &str = "Freifunk";
-const SSID_ONE: &str = "OpenWrt";
+const SSID_ZERO: &str = "OpenWrt";
+const SSID_ONE: &str = "Freifunk";
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -70,11 +70,17 @@ async fn run_net_stack(
         addr: tcp_bin,
         port: 4242,
     };
-    let rx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
-    let tx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
-    let rx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
-    let tx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
-    let mut udp_socket = UdpSocket::new(net_stack, rx_meta, rx_buffer, tx_meta, tx_buffer);
+    let mut rx_buffer = [0u8; 1600];
+    let mut tx_buffer = [0u8; 1600];
+    let mut rx_meta = [PacketMetadata::EMPTY; 16];
+    let mut tx_meta = [PacketMetadata::EMPTY; 16];
+    let mut udp_socket = UdpSocket::new(
+        net_stack,
+        &mut rx_meta,
+        &mut rx_buffer,
+        &mut tx_meta,
+        &mut tx_buffer,
+    );
     info!("Connected to tcpbin.com");
     udp_socket.bind(endpoint).unwrap();
     loop {
