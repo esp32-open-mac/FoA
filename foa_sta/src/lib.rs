@@ -39,7 +39,6 @@ use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex, channel::Channel, mutex::Mutex, watch::Watch,
 };
 use embassy_time::Duration;
-use esp32_wifi_hal_rs::{BorrowedBuffer, WiFiRate};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use ieee80211::{
     common::{AssociationID, FrameType, IEEE80211StatusCode, ManagementFrameSubtype},
@@ -53,6 +52,7 @@ use log::debug;
 
 use embassy_net_driver_channel::{self as ch, RxRunner};
 use foa::{
+    esp32_wifi_hal_rs::{BorrowedBuffer, WiFiRate},
     interface::{Interface, InterfaceInput},
     lmac::{LMacError, LMacInterfaceControl, LMacTransmitEndpoint},
 };

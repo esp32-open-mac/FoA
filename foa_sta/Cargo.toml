@@ -9,7 +9,6 @@ embassy-net = { version = "0.5.0", features = ["proto-ipv4", "dhcpv4", "medium-e
 embassy-net-driver-channel = "0.3.0"
 embassy-sync = "0.6.1"
 embassy-time = "0.3.2"
-esp32-wifi-hal-rs = { git = "https://github.com/esp32-open-mac/esp32-wifi-hal-rs.git", version = "0.1.0" }
 ethernet = { git = "https://github.com/Frostie314159/ethernet", version = "0.1.4", default-features = false }
 foa = { path = "../foa/" }
 heapless = "0.8.0"

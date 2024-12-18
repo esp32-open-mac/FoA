@@ -3,7 +3,6 @@
 use core::{marker::PhantomData, str::FromStr};
 
 use embassy_time::{with_timeout, Duration};
-use esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour, WiFiRate};
 use ieee80211::{
     common::{
         AssociationID, CapabilitiesInformation, IEEE80211AuthenticationAlgorithmNumber,
@@ -26,7 +25,10 @@ use ieee80211::{
 };
 use log::debug;
 
-use foa::lmac::{LMacInterfaceControl, LMacTransmitEndpoint};
+use foa::{
+    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour},
+    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
+};
 
 use super::{
     ConnectionInfo, ConnectionState, ConnectionStateMachineSubscriber, StaError, StaRxManagement,
@@ -502,7 +504,7 @@ impl<'res> StaControl<'res> {
             .transmit_endpoint
             .transmit(
                 &tx_buf[..written + 4],
-                WiFiRate::PhyRate6M,
+                DEFAULT_PHY_RATE,
                 TxErrorBehaviour::Drop,
             )
             .await;

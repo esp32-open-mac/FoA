@@ -4,9 +4,9 @@ use embassy_futures::select::{select, select3, Either3};
 use embassy_net::driver::{HardwareAddress, LinkState};
 use embassy_net_driver_channel::{StateRunner, TxRunner};
 use embassy_sync::channel;
-use esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour};
 use ethernet::Ethernet2Frame;
 use foa::{
+    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour},
     interface::InterfaceRunner,
     lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
 };

@@ -17,6 +17,8 @@ pub mod interface;
 pub mod lmac;
 pub mod tx_buffer_management;
 
+pub use esp32_wifi_hal_rs;
+
 /// The resources required by the WiFi stack.
 pub struct FoAStackResources<'a, IfZeroResources: Default, IfOneResources: Default = ()> {
     dma_resources: DMAResources<1600, 10>,

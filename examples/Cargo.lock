@@ -689,18 +689,10 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "embassy-futures",
- "embassy-net",
- "embassy-net-driver-channel",
  "embassy-sync",
- "embassy-time",
  "esp-hal",
  "esp32-wifi-hal-rs",
- "ether-type",
- "ethernet",
- "heapless 0.8.0",
- "llc",
  "log",
- "rand_core",
  "static_cell",
 ]
 
@@ -713,7 +705,6 @@ dependencies = [
  "embassy-net-driver-channel",
  "embassy-sync",
  "embassy-time",
- "esp32-wifi-hal-rs",
  "ethernet",
  "foa",
  "heapless 0.8.0",
