@@ -9,15 +9,13 @@ use embassy_net::udp::UdpSocket;
 use embassy_net::DhcpConfig;
 use embassy_net::Runner as NetRunner;
 use embassy_net::StackResources as NetStackResources;
+use embassy_time::Duration;
 use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
-use foa::{
-    bg_task::MultiInterfaceRunner,
-    sta::{StaInitInfo, StaInterface, StaNetDevice, StaSharedResources},
-    FoAStackResources,
-};
+use foa::{bg_task::MultiInterfaceRunner, FoAStackResources};
+use foa_sta::{StaInitInfo, StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
 
@@ -126,11 +124,11 @@ async fn main(spawner: Spawner) {
     let (zero, one) = join(
         sta_control_zero.connect(
             known_bss.iter().find(|bss| bss.ssid == SSID_ZERO).unwrap(),
-            None,
+            Some(Duration::from_secs(1)),
         ),
         sta_control_one.connect(
             known_bss.iter().find(|bss| bss.ssid == SSID_ONE).unwrap(),
-            None,
+            Some(Duration::from_secs(1)),
         ),
     )
     .await;

@@ -10,11 +10,8 @@ use embassy_net::{
 use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
-use foa::{
-    bg_task::SingleInterfaceRunner,
-    sta::{control::BSS, StaInitInfo, StaInterface, StaNetDevice, StaSharedResources},
-    FoAStackResources,
-};
+use foa::{bg_task::SingleInterfaceRunner, FoAStackResources};
+use foa_sta::{control::BSS, StaInitInfo, StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
 

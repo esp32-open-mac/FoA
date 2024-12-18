@@ -1,3 +1,5 @@
+#![no_std]
+
 //! This module implements a station (STA) interface for FoA.
 //!
 //! ## Usage
@@ -59,11 +61,11 @@ use ieee80211::{
 use llc::SnapLlcFrame;
 use log::debug;
 
-use crate::{
+use embassy_net_driver_channel::{self as ch, RxRunner, StateRunner, TxRunner};
+use foa::{
     interface::{Interface, InterfaceInput, InterfaceRunner},
     lmac::{LMacError, LMacInterfaceControl, LMacTransmitEndpoint},
 };
-use embassy_net_driver_channel::{self as ch, RxRunner, StateRunner, TxRunner};
 
 pub mod control;
 

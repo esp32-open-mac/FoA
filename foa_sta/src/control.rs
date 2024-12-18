@@ -26,14 +26,11 @@ use ieee80211::{
 };
 use log::debug;
 
-use crate::{
-    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
-    sta::{AUTHENTICATING, DEFAULT_PHY_RATE},
-};
+use foa::lmac::{LMacInterfaceControl, LMacTransmitEndpoint};
 
 use super::{
     ConnectionInfo, ConnectionState, ConnectionStateMachineSubscriber, StaError, StaRxManagement,
-    ASSOCIATING, DEFAULT_TIMEOUT, SCANNING,
+    ASSOCIATING, AUTHENTICATING, DEFAULT_PHY_RATE, DEFAULT_TIMEOUT, SCANNING,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

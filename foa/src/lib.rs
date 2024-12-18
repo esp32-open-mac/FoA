@@ -16,7 +16,6 @@ use tx_buffer_management::TxBufferManager;
 pub mod bg_task;
 pub mod interface;
 pub mod lmac;
-pub mod sta;
 pub mod tx_buffer_management;
 
 /// The resources required by the WiFi stack.
