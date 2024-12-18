@@ -406,8 +406,11 @@ impl<'res> StaControl<'res> {
                     else {
                         return true;
                     };
+                    let Ok(ssid) = heapless::String::from_str(ssid) else {
+                        return true;
+                    };
                     let _ = found_bss.push(BSS {
-                        ssid: heapless::String::from_str(ssid).unwrap(),
+                        ssid,
                         channel,
                         bssid: beacon_frame.header.bssid,
                         last_rssi: received.rssi(),
@@ -443,8 +446,11 @@ impl<'res> StaControl<'res> {
                     else {
                         return true;
                     };
+                    let Ok(ssid) = heapless::String::from_str(ssid) else {
+                        return true;
+                    };
                     ess = Some(BSS {
-                        ssid: heapless::String::from_str(ssid).unwrap(),
+                        ssid,
                         channel,
                         bssid: beacon_frame.header.bssid,
                         last_rssi: received.rssi(),
