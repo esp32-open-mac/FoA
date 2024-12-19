@@ -18,7 +18,7 @@
 //! is due to shared RX access being very hard to implement. Instead, frames addressed to an
 //! interface will be passed to [interface_input](crate::interface::InterfaceInput::interface_input), by the MAC task.
 use core::{
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::{Cell, RefCell},
     future::poll_fn,
     sync::atomic::{AtomicU16, Ordering},
     task::Poll,
@@ -160,7 +160,7 @@ impl OffChannelRequester {
 }
 
 pub(crate) struct SharedLMacState<'res> {
-    wifi: UnsafeCell<WiFi<'res>>,
+    wifi: WiFi<'res>,
     // Channel Management
     channel_state: critical_section::Mutex<RefCell<ChannelState>>,
     if_zero_off_channel_requester: OffChannelRequester,
@@ -170,7 +170,7 @@ pub(crate) struct SharedLMacState<'res> {
 impl<'res> SharedLMacState<'res> {
     pub const fn new(wifi: WiFi<'res>) -> Self {
         Self {
-            wifi: UnsafeCell::new(wifi),
+            wifi,
             channel_state: critical_section::Mutex::new(RefCell::new(ChannelState::NotLocked)),
             if_zero_off_channel_requester: OffChannelRequester::new(),
             if_one_off_channel_requester: OffChannelRequester::new(),
@@ -210,12 +210,6 @@ impl<'res> SharedLMacState<'res> {
             },
         )
     }
-    fn get_wifi(&self) -> &'res WiFi<'res> {
-        unsafe { self.wifi.get().as_ref().unwrap() }
-    }
-    unsafe fn wifi_mut<Res>(&'res self, f: impl FnOnce(&'res mut WiFi<'res>) -> Res) -> Res {
-        f(unsafe { self.wifi.get().as_mut().unwrap() })
-    }
     fn get_channel_state(&self) -> ChannelState {
         critical_section::with(|cs| *self.channel_state.borrow_ref(cs))
     }
@@ -248,17 +242,16 @@ pub struct OffChannelOperation<'a, 'res> {
 impl OffChannelOperation<'_, '_> {
     /// Set the channel.
     pub fn set_channel(&mut self, channel: u8) -> Result<(), LMacError> {
-        unsafe {
-            self.transmit_endpoint
-                .shared_state
-                .wifi_mut(|wifi| wifi.set_channel(channel))
-                .map_err(|_| LMacError::InvalidChannel)
-        }
+        self.transmit_endpoint
+            .shared_state
+            .wifi
+            .set_channel(channel)
+            .map_err(|_| LMacError::InvalidChannel)
     }
     pub fn set_scanning_mode(&mut self, enabled: bool) {
         self.transmit_endpoint
             .shared_state
-            .get_wifi()
+            .wifi
             .set_scanning_mode(self.rx_filter_interface, enabled);
     }
 }
@@ -287,7 +280,7 @@ pub(crate) struct LMacReceiveEndpoint<'res> {
 impl<'res> LMacReceiveEndpoint<'res> {
     /// Wait for a frame to arrive from the driver.
     pub async fn receive(&mut self) -> BorrowedBuffer<'res, 'res> {
-        self.shared_state.get_wifi().receive().await
+        self.shared_state.wifi.receive().await
     }
 }
 #[derive(Clone, Copy)]
@@ -307,7 +300,7 @@ impl<'res> LMacTransmitEndpoint<'res> {
         error_behaviour: TxErrorBehaviour,
     ) -> WiFiResult<()> {
         self.shared_state
-            .get_wifi()
+            .wifi
             .transmit(buffer, rate, error_behaviour)
             .await
     }
@@ -355,7 +348,7 @@ impl<'res> LMacTransmitEndpoint<'res> {
         OffChannelOperation {
             transmit_endpoint: self,
             previous_channel_state: channel_state,
-            previous_channel: self.shared_state.get_wifi().get_channel(),
+            previous_channel: self.shared_state.wifi.get_channel(),
         }
 
     }
@@ -385,7 +378,7 @@ impl LMacInterfaceControl<'_> {
         mac_address: [u8; 6],
         mask: Option<[u8; 6]>,
     ) {
-        self.shared_state.get_wifi().set_filter(
+        self.shared_state.wifi.set_filter(
             bank,
             self.rx_filter_interface,
             mac_address,
@@ -397,7 +390,7 @@ impl LMacInterfaceControl<'_> {
     /// NOTE: You need to set **and** enable the filter.
     pub fn set_filter_status(&self, bank: RxFilterBank, enabled: bool) {
         self.shared_state
-            .get_wifi()
+            .wifi
             .set_filter_status(bank, self.rx_filter_interface, enabled);
     }
     /// Set the scanning mode of the RX filter interface.
@@ -405,7 +398,7 @@ impl LMacInterfaceControl<'_> {
     /// Enabling this, tells the hardware to forward any broadcast MPDUs to this interface.
     pub fn set_scanning_mode(&self, enabled: bool) {
         self.shared_state
-            .get_wifi()
+            .wifi
             .set_scanning_mode(self.rx_filter_interface, enabled);
     }
     // TODO: I will implement this after 38c3, to make the connection bring up cancel safe.
@@ -456,7 +449,7 @@ impl LMacInterfaceControl<'_> {
                     // If we're lucky and the locked channel and the requested channel match, we
                     // can just set the channel state to locked by both. Otherwise, we return an
                     // error.
-                    if self.shared_state.get_wifi().get_channel() == channel {
+                    if self.shared_state.wifi.get_channel() == channel {
                         self.shared_state
                             .set_channel_state(ChannelState::LockedByBothInterfaces);
                     } else {
@@ -475,7 +468,9 @@ impl LMacInterfaceControl<'_> {
         }
         // Once we got to this point, we should have handled all invariants and can safely go to a
         // new channel.
-        unsafe { self.shared_state.wifi_mut(|wifi| wifi.set_channel(channel)) }
+        self.shared_state
+            .wifi
+            .set_channel(channel)
             .map_err(|_| LMacError::InvalidChannel)?;
         Ok(())
     }
@@ -538,7 +533,7 @@ impl LMacInterfaceControl<'_> {
             rx_filter_interface: self.rx_filter_interface,
             transmit_endpoint,
             previous_channel_state,
-            previous_channel: self.shared_state.get_wifi().get_channel(),
+            previous_channel: self.shared_state.wifi.get_channel(),
         })
     }
     /// Wait for any pending off channel operations to complete.
