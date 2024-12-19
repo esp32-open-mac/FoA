@@ -13,3 +13,7 @@ esp32-wifi-hal-rs = { git = "https://github.com/esp32-open-mac/esp32-wifi-hal-rs
 log = "0.4.22"
 static_cell = "2.1.0"
 critical-section = "1.2.0"
+
+[features]
+clear_tx_buffers = []
+
