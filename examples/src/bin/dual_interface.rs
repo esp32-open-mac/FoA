@@ -15,7 +15,7 @@ use esp_backtrace as _;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 use foa::{bg_task::MultiInterfaceRunner, FoAStackResources};
-use foa_sta::{StaInitInfo, StaInterface, StaNetDevice, StaSharedResources};
+use foa_sta::{StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
 
@@ -108,8 +108,8 @@ async fn main(spawner: Spawner) {
         peripherals.WIFI,
         peripherals.RADIO_CLK,
         peripherals.ADC2,
-        StaInitInfo,
-        StaInitInfo,
+        (),
+        (),
     )
     .await;
     spawner.spawn(wifi_task(wifi_runner)).unwrap();
