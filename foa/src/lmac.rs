@@ -367,7 +367,10 @@ pub struct LMacInterfaceControl<'res> {
 impl LMacInterfaceControl<'_> {
     /// Get and increase the current sequence_number.
     pub fn get_and_increase_sequence_number(&self) -> u16 {
-        self.sequence_number.fetch_add(1, Ordering::Relaxed)
+        let sequence_number = self.sequence_number.load(Ordering::Relaxed);
+        self.sequence_number
+            .store(sequence_number.wrapping_add(1), Ordering::Relaxed);
+        sequence_number
     }
     /// Set the filter parameters.
     ///
