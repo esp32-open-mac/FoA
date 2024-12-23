@@ -6,7 +6,7 @@ use embassy_net_driver_channel::{StateRunner, TxRunner};
 use embassy_sync::channel;
 use ethernet::Ethernet2Frame;
 use foa::{
-    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour},
+    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxParameters},
     interface::InterfaceRunner,
     lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
 };
@@ -74,9 +74,11 @@ impl StaRunner<'_> {
         };
         let _ = transmit_endpoint
             .transmit(
-                &tx_buf[..written + 4],
-                DEFAULT_PHY_RATE,
-                TxErrorBehaviour::Drop,
+                &mut tx_buf[..written],
+                &TxParameters {
+                    rate: DEFAULT_PHY_RATE,
+                    ..interface_control.get_default_tx_parameters()
+                },
             )
             .await;
         debug!(

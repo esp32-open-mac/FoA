@@ -17,7 +17,7 @@ use crate::{
     NO_OPERATION, SCANNING,
 };
 
-/// Interface input for the [StaInterface].
+/// Interface input for the [StaInterface](crate::StaInterface).
 pub struct StaInput<'res> {
     pub(crate) rx_management: &'res StaRxManagement<'res>,
     pub(crate) rx_runner: RxRunner<'res, MTU>,

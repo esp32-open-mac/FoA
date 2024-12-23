@@ -8,7 +8,7 @@ embassy-sync = "0.6.0"
 embassy-futures = "0.1.1"
 
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", package = "esp-hal", features = ["esp32"] }
-esp32-wifi-hal-rs = { git = "https://github.com/esp32-open-mac/esp32-wifi-hal-rs", features = ["log"] }
+esp32-wifi-hal-rs = { path = "../../esp32-wifi-hal-rs/esp32-wifi-hal-rs/", features = ["log"] }
 
 log = "0.4.22"
 static_cell = "2.1.0"

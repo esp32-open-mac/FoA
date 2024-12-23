@@ -26,7 +26,7 @@ use ieee80211::{
 use log::debug;
 
 use foa::{
-    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxErrorBehaviour},
+    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxParameters},
     lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
 };
 
@@ -190,9 +190,14 @@ impl ConnectionOperation<'_, '_> {
             .sta_control
             .transmit_endpoint
             .transmit(
-                &tx_buffer[..written + 4],
-                DEFAULT_PHY_RATE,
-                TxErrorBehaviour::RetryUntil(4),
+                &mut tx_buffer[..written],
+                &TxParameters {
+                    rate: DEFAULT_PHY_RATE,
+                    ..self
+                        .sta_control
+                        .interface_control
+                        .get_default_tx_parameters()
+                },
             )
             .await;
         // Due to the user operation being set to authenticating, we'll only receive authentication
@@ -207,7 +212,7 @@ impl ConnectionOperation<'_, '_> {
                 "Failed to authenticate with {}, frame deserialization failed.",
                 bss.bssid
             );
-            return Err(StaError::FrameDeserilisationFailed);
+            return Err(StaError::FrameDeserializationFailed);
         };
         if auth_frame.status_code == IEEE80211StatusCode::Success {
             debug!("Successfuly authenticated with {}.", bss.bssid);
@@ -260,9 +265,14 @@ impl ConnectionOperation<'_, '_> {
             .sta_control
             .transmit_endpoint
             .transmit(
-                &tx_buffer[..written + 4],
-                DEFAULT_PHY_RATE,
-                TxErrorBehaviour::RetryUntil(4),
+                &mut tx_buffer[..written],
+                &TxParameters {
+                    rate: DEFAULT_PHY_RATE,
+                    ..self
+                        .sta_control
+                        .interface_control
+                        .get_default_tx_parameters()
+                },
             )
             .await;
         let Ok(received) = with_timeout(timeout, self.sta_control.rx_from_user_queue()).await
@@ -270,16 +280,10 @@ impl ConnectionOperation<'_, '_> {
             debug!("Association timed out.");
             return Err(StaError::Timeout);
         };
-        let Ok(assoc_response) = received
+        let assoc_response = received
             .mpdu_buffer()
-            .pread_with::<AssociationResponseFrame>(0, false)
-        else {
-            debug!(
-                "Failed to associate with {}, frame deserialization failed.",
-                bss.bssid
-            );
-            return Err(StaError::FrameDeserilisationFailed);
-        };
+            .pread::<AssociationResponseFrame>(0)
+            .unwrap();
         if assoc_response.status_code == IEEE80211StatusCode::Success {
             debug!(
                 "Successfuly associated with {}, AID: {:?}.",
@@ -503,9 +507,11 @@ impl<'res> StaControl<'res> {
         let _ = self
             .transmit_endpoint
             .transmit(
-                &tx_buf[..written + 4],
-                DEFAULT_PHY_RATE,
-                TxErrorBehaviour::Drop,
+                &mut tx_buf[..written],
+                &TxParameters {
+                    rate: DEFAULT_PHY_RATE,
+                    ..self.interface_control.get_default_tx_parameters()
+                },
             )
             .await;
         self.connection_state_subscriber

@@ -67,7 +67,7 @@ pub enum StaError {
     /// An operation didn't complete in time.
     Timeout,
     /// Deserializing a received frame failed.
-    FrameDeserilisationFailed,
+    FrameDeserializationFailed,
     /// Authentication failed with the specified status code.
     AuthenticationFailure(IEEE80211StatusCode),
     /// Association failed with the specified status code.

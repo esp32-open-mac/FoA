@@ -31,7 +31,8 @@ use embassy_sync::{
     watch::{DynReceiver, Watch},
 };
 use esp32_wifi_hal_rs::{
-    BorrowedBuffer, RxFilterBank, RxFilterInterface, TxErrorBehaviour, WiFi, WiFiRate, WiFiResult,
+    BorrowedBuffer, RxFilterBank, RxFilterInterface, TxErrorBehaviour, TxParameters, WiFi,
+    WiFiRate, WiFiResult,
 };
 
 use crate::tx_buffer_management::{DynTxBufferManager, TxBuffer};
@@ -295,14 +296,10 @@ impl<'res> LMacTransmitEndpoint<'res> {
     /// NOTE: This will not check, whether an off channel operation is currently in progress.
     pub async fn transmit(
         &self,
-        buffer: &[u8],
-        rate: WiFiRate,
-        error_behaviour: TxErrorBehaviour,
+        buffer: &mut [u8],
+        tx_parameters: &TxParameters,
     ) -> WiFiResult<()> {
-        self.shared_state
-            .wifi
-            .transmit(buffer, rate, error_behaviour)
-            .await
+        self.shared_state.wifi.transmit(buffer, tx_parameters).await
     }
     /// Allocate a [TxBuffer] from the buffer manager.
     pub async fn alloc_tx_buf(&self) -> TxBuffer {
@@ -556,5 +553,15 @@ impl LMacInterfaceControl<'_> {
             .get_off_channel_requester_for_interface(self.rx_filter_interface)
             .wait_for_request()
             .await
+    }
+    pub fn get_default_tx_parameters(&self) -> TxParameters {
+        TxParameters {
+            rate: WiFiRate::PhyRate1ML,
+            duration: 0,
+            interface_zero: self.rx_filter_interface == RxFilterInterface::Zero,
+            interface_one: self.rx_filter_interface == RxFilterInterface::One,
+            wait_for_ack: true,
+            tx_error_behaviour: TxErrorBehaviour::RetryUntil(4),
+        }
     }
 }
