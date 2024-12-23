@@ -11,7 +11,7 @@ use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use foa::{bg_task::SingleInterfaceRunner, FoAStackResources};
-use foa_sta::{control::BSS, StaInterface, StaNetDevice, StaSharedResources};
+use foa_sta::{StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
 
@@ -33,15 +33,6 @@ async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>
 #[embassy_executor::task]
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
     net_runner.run().await
-}
-fn print_bss(bss: BSS) {
-    let BSS {
-        ssid,
-        bssid,
-        channel,
-        last_rssi,
-    } = bss;
-    info!("Found ESS with SSID: \"{ssid}\" and BSSID: {bssid} on channel {channel}. Last RSSI was {last_rssi}dBm.");
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {

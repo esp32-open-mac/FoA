@@ -20,6 +20,8 @@ use log::info;
 use rand_core::RngCore;
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
+const SSID: &str = "OpenWrt";
+
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
@@ -72,7 +74,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    let network = sta_control.find_ess(None, "OpenWrt").await.unwrap();
+    let network = sta_control.find_ess(None, SSID).await.unwrap();
     sta_control.connect(&network, None).await.unwrap();
 
     info!("Connected to {}.", network.ssid);
