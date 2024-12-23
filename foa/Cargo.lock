@@ -464,6 +464,7 @@ dependencies = [
 [[package]]
 name = "esp32-wifi-hal-rs"
 version = "0.1.0"
+source = "git+https://github.com/esp32-open-mac/esp32-wifi-hal-rs#266245f0faa72895d931b87bb490773f0926b609"
 dependencies = [
  "atomic-waker",
  "bitfield-struct",
