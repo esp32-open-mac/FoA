@@ -166,11 +166,7 @@ impl ConnectionOperation<'_, '_> {
                         receiver_address: bss.bssid,
                         bssid: bss.bssid,
                         transmitter_address: self.sta_control.mac_address,
-                        sequence_control: SequenceControl::new().with_sequence_number(
-                            self.sta_control
-                                .interface_control
-                                .get_and_increase_sequence_number(),
-                        ),
+                        sequence_control: SequenceControl::new(),
                         ..Default::default()
                     },
                     body: AuthenticationBody {
@@ -238,11 +234,7 @@ impl ConnectionOperation<'_, '_> {
                         receiver_address: bss.bssid,
                         bssid: bss.bssid,
                         transmitter_address: self.sta_control.mac_address,
-                        sequence_control: SequenceControl::new().with_sequence_number(
-                            self.sta_control
-                                .interface_control
-                                .get_and_increase_sequence_number(),
-                        ),
+                        sequence_control: SequenceControl::new(),
                         ..Default::default()
                     },
                     body: AssociationRequestBody {
@@ -490,9 +482,7 @@ impl<'res> StaControl<'res> {
                         receiver_address: connection_info.bssid,
                         bssid: connection_info.bssid,
                         transmitter_address: connection_info.own_address,
-                        sequence_control: SequenceControl::new().with_sequence_number(
-                            self.interface_control.get_and_increase_sequence_number(),
-                        ),
+                        sequence_control: SequenceControl::new(),
                         ..Default::default()
                     },
                     body: DeauthenticationBody {

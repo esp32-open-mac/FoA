@@ -20,7 +20,6 @@
 use core::{
     cell::{Cell, RefCell},
     future::poll_fn,
-    sync::atomic::{AtomicU16, Ordering},
     task::Poll,
 };
 
@@ -199,7 +198,6 @@ impl<'res> SharedLMacState<'res> {
                 off_channel_completion_receiver: Mutex::new(
                     self.off_channel_completion_signal.dyn_receiver().unwrap(),
                 ),
-                sequence_number: AtomicU16::new(0),
             },
             LMacInterfaceControl {
                 shared_state: self,
@@ -207,7 +205,6 @@ impl<'res> SharedLMacState<'res> {
                 off_channel_completion_receiver: Mutex::new(
                     self.off_channel_completion_signal.dyn_receiver().unwrap(),
                 ),
-                sequence_number: AtomicU16::new(0),
             },
         )
     }
@@ -293,6 +290,7 @@ pub struct LMacTransmitEndpoint<'res> {
 impl<'res> LMacTransmitEndpoint<'res> {
     /// Transmit a frame.
     ///
+    /// For an exact description see [WiFi::transmit], as this is just a passthrough.
     /// NOTE: This will not check, whether an off channel operation is currently in progress.
     pub async fn transmit(
         &self,
@@ -358,17 +356,8 @@ pub struct LMacInterfaceControl<'res> {
     rx_filter_interface: RxFilterInterface,
     /// Receiver for off channel completion notifications.
     off_channel_completion_receiver: Mutex<NoopRawMutex, DynReceiver<'res, ()>>,
-    /// The current sequence number for this interface.
-    sequence_number: AtomicU16,
 }
 impl LMacInterfaceControl<'_> {
-    /// Get and increase the current sequence_number.
-    pub fn get_and_increase_sequence_number(&self) -> u16 {
-        let sequence_number = self.sequence_number.load(Ordering::Relaxed);
-        self.sequence_number
-            .store(sequence_number.wrapping_add(1), Ordering::Relaxed);
-        sequence_number
-    }
     /// Set the filter parameters.
     ///
     /// NOTE: You need to set **and** enable the filter.
@@ -554,6 +543,9 @@ impl LMacInterfaceControl<'_> {
             .wait_for_request()
             .await
     }
+    /// Returns the default [TxParameters] for this interface.
+    ///
+    /// This sets the interface parameters and enables `wait_for_ack`.
     pub fn get_default_tx_parameters(&self) -> TxParameters {
         TxParameters {
             rate: WiFiRate::PhyRate1ML,
@@ -561,6 +553,7 @@ impl LMacInterfaceControl<'_> {
             interface_zero: self.rx_filter_interface == RxFilterInterface::Zero,
             interface_one: self.rx_filter_interface == RxFilterInterface::One,
             wait_for_ack: true,
+            override_seq_num: true,
             tx_error_behaviour: TxErrorBehaviour::RetryUntil(4),
         }
     }

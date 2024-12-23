@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "anyhow"
-version = "1.0.94"
+version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1fd03a028ef38ba2276dce7e33fcd6369c158a1bca17946c4b1b701891c1ff7"
+checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
 
 [[package]]
 name = "atomic-waker"
@@ -54,9 +54,9 @@ checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
 name = "bytemuck"
-version = "1.20.0"
+version = "1.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b37c88a63ffd85d15b406896cc343916d7cf57838a847b3a6f2ca5d39a5695a"
+checksum = "ef657dfab802224e671f5818e9a4935f9b1957ed18e58292690cc39e7a4092a3"
 
 [[package]]
 name = "byteorder"
@@ -347,7 +347,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 [[package]]
 name = "esp-build"
 version = "0.1.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "quote",
  "syn",
@@ -357,7 +357,7 @@ dependencies = [
 [[package]]
 name = "esp-config"
 version = "0.2.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "document-features",
 ]
@@ -365,7 +365,7 @@ dependencies = [
 [[package]]
 name = "esp-hal"
 version = "0.22.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "basic-toml",
  "bitfield",
@@ -410,7 +410,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.15.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "darling",
  "document-features",
@@ -425,7 +425,7 @@ dependencies = [
 [[package]]
 name = "esp-metadata"
 version = "0.4.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "anyhow",
  "basic-toml",
@@ -436,7 +436,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.9.1"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "document-features",
  "riscv",
@@ -464,7 +464,7 @@ dependencies = [
 [[package]]
 name = "esp32-wifi-hal-rs"
 version = "0.1.0"
-source = "git+https://github.com/esp32-open-mac/esp32-wifi-hal-rs#266245f0faa72895d931b87bb490773f0926b609"
+source = "git+https://github.com/esp32-open-mac/esp32-wifi-hal-rs#0270251ee7d3b290ba50581867643d51be44ca3a"
 dependencies = [
  "atomic-waker",
  "bitfield-struct",
@@ -599,9 +599,9 @@ checksum = "b248f5224d1d606005e02c97f5aa4e88eeb230488bcc03bc9ca4d7991399f2b5"
 
 [[package]]
 name = "instability"
-version = "0.3.3"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b829f37dead9dc39df40c2d3376c179fdfd2ac771f53f55d3c30dc096a3c0c6e"
+checksum = "898e106451f7335950c9cc64f8ec67b5f65698679ac67ed00619aeef14e1cf75"
 dependencies = [
  "darling",
  "indoc",
@@ -890,9 +890,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.90"
+version = "2.0.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "919d3b74a5dd0ccd15aeb8f93e7006bd9e14c295087c9896a110f490752bcf31"
+checksum = "d53cbcb5a243bd33b7858b1d7f4aca2153490815872d86d955d6ea29f743c035"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1060,7 +1060,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx"
 version = "0.9.0"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "critical-section",
  "document-features",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt"
 version = "0.17.2"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "anyhow",
  "document-features",
@@ -1086,7 +1086,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt-proc-macros"
 version = "0.2.2"
-source = "git+https://github.com/esp-rs/esp-hal#f990957f214654bc50bf896d66539874d299ce9e"
+source = "git+https://github.com/esp-rs/esp-hal#36095e447e6b99115c34e591f3c29e292638b9e0"
 dependencies = [
  "darling",
  "proc-macro2",

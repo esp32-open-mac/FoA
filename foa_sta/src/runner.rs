@@ -57,8 +57,7 @@ impl StaRunner<'_> {
                 address_1: connection_info.bssid,
                 address_2: connection_info.own_address,
                 address_3: ethernet_frame.header.dst,
-                sequence_control: SequenceControl::new()
-                    .with_sequence_number(interface_control.get_and_increase_sequence_number()),
+                sequence_control: SequenceControl::new(),
                 ..Default::default()
             },
             payload: Some(SnapLlcFrame {
