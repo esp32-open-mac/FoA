@@ -3,17 +3,22 @@
 
 use embassy_executor::Spawner;
 use embassy_net::{
-    dns::{DnsQueryType, DnsSocket},
-    udp::{PacketMetadata, UdpSocket},
+    dns::DnsSocket,
+    tcp::client::{TcpClient, TcpClientState},
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
-use embassy_time::Timer;
+use embedded_io_async::Read;
 use esp_backtrace as _;
-use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{
+    rng::Rng,
+    timer::timg::TimerGroup,
+    uart::{self, Uart},
+};
 use foa::{bg_task::SingleInterfaceRunner, FoAStackResources};
-use foa_sta::{control::BSS, StaInterface, StaNetDevice, StaSharedResources};
+use foa_sta::{StaInterface, StaNetDevice, StaSharedResources};
 use log::info;
 use rand_core::RngCore;
+use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -24,8 +29,6 @@ macro_rules! mk_static {
     }};
 }
 
-const SSID: &str = "OpenWrt"; // My test router.
-
 #[embassy_executor::task]
 async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>) -> ! {
     wifi_runner.run().await
@@ -33,15 +36,6 @@ async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>
 #[embassy_executor::task]
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
     net_runner.run().await
-}
-fn print_bss(bss: BSS) {
-    let BSS {
-        ssid,
-        bssid,
-        channel,
-        last_rssi,
-    } = bss;
-    info!("Found ESS with SSID: \"{ssid}\" and BSSID: {bssid} on channel {channel}. Last RSSI was {last_rssi}dBm.");
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -78,42 +72,47 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    let bss = sta_control.find_ess(None, SSID).await.unwrap();
+    let network = sta_control.find_ess(None, "OpenWrt").await.unwrap();
+    sta_control.connect(&network, None).await.unwrap();
 
-    // sta_control.set_mac_address(mac_address).await.unwrap();
-    sta_control.connect(&bss, None).await.unwrap();
+    info!("Connected to {}.", network.ssid);
 
-    // Wait for DHCP, not necessary when using static IP
-    info!("waiting for DHCP...");
-    while !net_stack.is_config_up() {
-        Timer::after_millis(100).await;
-    }
+    net_stack.wait_config_up().await;
     info!(
-        "DHCP is now up! Got address {}",
+        "DHCP: Got address {}.",
         net_stack.config_v4().unwrap().address
     );
-    let dns_socket = DnsSocket::new(net_stack);
-    let tcp_bin = dns_socket
-        .query("tcpbin.org", DnsQueryType::A)
+
+    let client_state = mk_static!(TcpClientState<4, 1500, 1500>, TcpClientState::new());
+    let tcp_client = TcpClient::new(net_stack, client_state);
+    let dns_client = DnsSocket::new(net_stack);
+    let mut http_client = HttpClient::new(&tcp_client, &dns_client);
+
+    let rx_buf = mk_static!([u8; 8192], [0; 8192]);
+
+    let mut request = http_client
+        .request(Method::GET, "http://parrot.live/")
         .await
-        .expect("DNS lookup failure")[0];
-    info!("Queried tcpbin.com: {tcp_bin:?}");
-    let endpoint = embassy_net::IpEndpoint {
-        addr: tcp_bin,
-        port: 4242,
+        .unwrap();
+    let response = request.send(rx_buf).await.unwrap();
+    let BodyReader::Chunked(mut chunked_reader) = response.body().reader() else {
+        panic!()
     };
-    let rx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
-    let tx_buffer = mk_static!([u8; 1600], [0u8; 1600]);
-    let rx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
-    let tx_meta = mk_static!([PacketMetadata; 16], [PacketMetadata::EMPTY; 16]);
-    let mut udp_socket = UdpSocket::new(net_stack, rx_meta, rx_buffer, tx_meta, tx_buffer);
-    info!("Connected to tcpbin.com");
-    udp_socket.bind(endpoint).unwrap();
+    let parrot_buffer = mk_static!([u8; 1500], [0u8; 1500]);
+    let (_uart0_rx, mut uart0_tx) = Uart::new(
+        peripherals.UART0,
+        uart::Config::default().rx_fifo_full_threshold(64),
+        peripherals.GPIO3,
+        peripherals.GPIO1,
+    )
+    .unwrap()
+    .into_async()
+    .split();
     loop {
-        udp_socket
-            .send_to([0xff; 1].as_slice(), endpoint)
+        let read = chunked_reader
+            .read(parrot_buffer.as_mut_slice())
             .await
             .unwrap();
-        Timer::after_secs(1).await;
+        let _ = uart0_tx.write_async(&parrot_buffer[..read]).await;
     }
 }
