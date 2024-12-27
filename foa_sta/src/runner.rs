@@ -20,9 +20,7 @@ use ieee80211::{
 use llc::SnapLlcFrame;
 use log::debug;
 
-use crate::{
-    ConnectionInfo, ConnectionState, ConnectionStateMachineSubscriber, DEFAULT_PHY_RATE, MTU,
-};
+use crate::{ConnectionState, ConnectionStateTracker, DEFAULT_PHY_RATE, MTU};
 
 /// Interface runner for the [StaInterface](crate::StaInterface).
 pub struct StaRunner<'res> {
@@ -36,7 +34,7 @@ pub struct StaRunner<'res> {
     pub(crate) state_runner: StateRunner<'res>,
 
     // Connection management.
-    pub(crate) connection_state_subscriber: Option<ConnectionStateMachineSubscriber<'res>>,
+    pub(crate) connection_state: &'res ConnectionStateTracker,
 }
 impl StaRunner<'_> {
     /// Transmit a data frame to the AP.
@@ -44,8 +42,11 @@ impl StaRunner<'_> {
         buffer: &[u8],
         interface_control: &LMacInterfaceControl<'_>,
         transmit_endpoint: &LMacTransmitEndpoint<'_>,
-        connection_info: &ConnectionInfo,
+        connection_state: &ConnectionStateTracker,
     ) {
+        let Some(connection_info) = connection_state.connection_info().await else {
+            return;
+        };
         let Ok(ethernet_frame) = buffer.pread::<Ethernet2Frame>(0) else {
             return;
         };
@@ -92,40 +93,36 @@ impl StaRunner<'_> {
     async fn handle_deauth(
         &mut self,
         deauth: DeauthenticationFrame<'_>,
-        connection_state_subscriber: &ConnectionStateMachineSubscriber<'_>,
+        connection_state: &ConnectionStateTracker,
     ) {
         debug!(
             "Received deauthentication frame from {}, reason: {:?}.",
             deauth.header.transmitter_address, deauth.reason
         );
-        connection_state_subscriber
-            .signal_state_change(ConnectionState::Disconnected)
+        connection_state
+            .signal_state(ConnectionState::Disconnected)
             .await;
     }
     /// Handle a frame arriving on the background queue, during a connection.
     async fn handle_bg_rx(
         &mut self,
         buffer: BorrowedBuffer<'_, '_>,
-        connection_state_subscriber: &ConnectionStateMachineSubscriber<'_>,
+        connection_state: &ConnectionStateTracker,
     ) {
         let _ = match_frames! {
             buffer.mpdu_buffer(),
             deauth = DeauthenticationFrame => {
-                self.handle_deauth(deauth, connection_state_subscriber).await;
+                self.handle_deauth(deauth, connection_state).await;
             }
         };
     }
     /// Run the background task, while connected.
-    async fn run_connection(
-        &mut self,
-        connection_info: &ConnectionInfo,
-        connection_state_subscriber: &ConnectionStateMachineSubscriber<'_>,
-    ) -> ! {
+    async fn run_connection(&mut self) -> ! {
         loop {
             // We wait for one of three things to happen.
             // 1. An off channel request arrives, which we grant immediately and wait for its
             //    completion.
-            // 2. A frame to arrive from the backrground queue.
+            // 2. A frame to arrive from the background queue.
             // 3. A frame arriving for TX.
             match select3(
                 self.interface_control.wait_for_off_channel_request(),
@@ -140,15 +137,13 @@ impl StaRunner<'_> {
                         .wait_for_off_channel_completion()
                         .await;
                 }
-                Either3::Second(buffer) => {
-                    self.handle_bg_rx(buffer, connection_state_subscriber).await
-                }
+                Either3::Second(buffer) => self.handle_bg_rx(buffer, self.connection_state).await,
                 Either3::Third(data) => {
                     Self::handle_data_tx(
                         data,
                         self.interface_control,
                         &self.transmit_endpoint,
-                        connection_info,
+                        self.connection_state,
                     )
                     .await;
                     self.tx_runner.tx_done();
@@ -161,9 +156,8 @@ impl InterfaceRunner for StaRunner<'_> {
     /// Run the station interface.
     async fn run(&mut self) -> ! {
         debug!("STA runner active.");
-        let connection_state_subscriber = self.connection_state_subscriber.take().unwrap();
         loop {
-            let connection_info = connection_state_subscriber.wait_for_connection().await;
+            let connection_info = self.connection_state.wait_for_connection().await;
             self.state_runner
                 .set_hardware_address(HardwareAddress::Ethernet(*connection_info.own_address));
             self.state_runner.set_link_state(LinkState::Up);
@@ -173,8 +167,8 @@ impl InterfaceRunner for StaRunner<'_> {
 
             // Run the connection, until we're disconnected.
             select(
-                connection_state_subscriber.wait_for_disconnection(),
-                self.run_connection(&connection_info, &connection_state_subscriber),
+                self.connection_state.wait_for_disconnection(),
+                self.run_connection(),
             )
             .await;
 

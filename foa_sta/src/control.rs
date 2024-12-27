@@ -30,9 +30,11 @@ use foa::{
     lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
 };
 
+use crate::ConnectionStateTracker;
+
 use super::{
-    ConnectionInfo, ConnectionState, ConnectionStateMachineSubscriber, StaError, StaRxManagement,
-    ASSOCIATING, AUTHENTICATING, DEFAULT_PHY_RATE, DEFAULT_TIMEOUT, SCANNING,
+    ConnectionInfo, ConnectionState, StaError, StaRxManagement, ASSOCIATING, AUTHENTICATING,
+    DEFAULT_PHY_RATE, DEFAULT_TIMEOUT, SCANNING,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -319,8 +321,8 @@ impl ConnectionOperation<'_, '_> {
         let aid = self.do_assoc(bss, timeout).await?;
 
         self.sta_control
-            .connection_state_subscriber
-            .signal_state_change(ConnectionState::Connected(ConnectionInfo {
+            .connection_state
+            .signal_state(ConnectionState::Connected(ConnectionInfo {
                 bssid: bss.bssid,
                 own_address: self.sta_control.mac_address,
                 aid,
@@ -345,7 +347,9 @@ pub struct StaControl<'res> {
 
     // Misc.
     pub(crate) mac_address: MACAddress,
-    pub(crate) connection_state_subscriber: ConnectionStateMachineSubscriber<'res>,
+
+    // Connection management.
+    pub(crate) connection_state: &'res ConnectionStateTracker,
 }
 impl<'res> StaControl<'res> {
     /// Receive data from the user queue.
@@ -355,12 +359,7 @@ impl<'res> StaControl<'res> {
 
     /// Set the MAC address for the STA interface.
     pub async fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
-        if self
-            .connection_state_subscriber
-            .is_connected()
-            .await
-            .is_some()
-        {
+        if self.connection_state.connection_info().await.is_some() {
             Err(StaError::StillConnected)
         } else {
             self.mac_address = MACAddress::new(mac_address);
@@ -470,8 +469,7 @@ impl<'res> StaControl<'res> {
     }
     /// Disconnect from the current network.
     pub async fn disconnect(&mut self) {
-        let Some(connection_info) = self.connection_state_subscriber.is_connected().await else {
-            // We're already disconnected here.
+        let Some(connection_info) = self.connection_state.connection_info().await else {
             return;
         };
         let mut tx_buf = self.transmit_endpoint.alloc_tx_buf().await;
@@ -504,8 +502,8 @@ impl<'res> StaControl<'res> {
                 },
             )
             .await;
-        self.connection_state_subscriber
-            .signal_state_change(ConnectionState::Disconnected)
+        self.connection_state
+            .signal_state(ConnectionState::Disconnected)
             .await;
         debug!("Disconnected from {}", connection_info.bssid);
     }

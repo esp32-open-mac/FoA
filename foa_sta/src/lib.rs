@@ -28,15 +28,12 @@
 //! 2. Connecting to a network.
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
-use core::{
-    array,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use control::StaControl;
 use embassy_net::driver::HardwareAddress;
 use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex, channel::Channel, mutex::Mutex, watch::Watch,
+    blocking_mutex::raw::NoopRawMutex, channel::Channel, mutex::Mutex, signal::Signal,
 };
 use embassy_time::Duration;
 use ieee80211::{
@@ -131,77 +128,44 @@ pub(crate) enum ConnectionState {
     Disconnected,
     Connected(ConnectionInfo),
 }
-/// Tracks the state of the connection and allows awaiting state changes.
-struct ConnectionStateMachine {
-    state: Mutex<NoopRawMutex, ConnectionState>,
-    state_change_watch: Watch<NoopRawMutex, (), 3>,
+pub(crate) struct ConnectionStateTracker {
+    connection_state: Mutex<NoopRawMutex, ConnectionState>,
+    connection_state_signal: Signal<NoopRawMutex, ()>,
 }
-impl ConnectionStateMachine {
-    /// Split the state machine into three subscribers.
-    ///
-    /// They are for [StaControl], [StaRunner] and [StaInput].
-    fn split(&mut self) -> [ConnectionStateMachineSubscriber<'_>; 3] {
-        array::from_fn(|_| ConnectionStateMachineSubscriber {
-            state_machine: self,
-        })
-    }
-}
-impl Default for ConnectionStateMachine {
-    fn default() -> Self {
+impl ConnectionStateTracker {
+    pub const fn new() -> Self {
         Self {
-            state: Mutex::new(ConnectionState::Disconnected),
-            state_change_watch: Watch::new(),
+            connection_state: Mutex::new(ConnectionState::Disconnected),
+            connection_state_signal: Signal::new(),
         }
     }
-}
-/// Allows accessing the [ConnectionStateMachine].
-pub(crate) struct ConnectionStateMachineSubscriber<'res> {
-    state_machine: &'res ConnectionStateMachine,
-}
-impl ConnectionStateMachineSubscriber<'_> {
-    /// Checks if the current conenction state is [ConnectionState::Connected] and returns the
-    /// [ConnectionInfo].
-    pub async fn is_connected(&self) -> Option<ConnectionInfo> {
-        if let ConnectionState::Connected(info) = *self.state_machine.state.lock().await {
-            Some(info)
-        } else {
-            None
+    pub async fn signal_state(&self, new_state: ConnectionState) {
+        *self.connection_state.lock().await = new_state;
+        self.connection_state_signal.signal(());
+    }
+    pub async fn connection_info(&self) -> Option<ConnectionInfo> {
+        match *self.connection_state.lock().await {
+            ConnectionState::Connected(connection_info) => Some(connection_info),
+            ConnectionState::Disconnected => None,
         }
     }
-    /// Checks if the current connection state is [ConnectionState::Disconnected].
-    pub async fn is_disconnected(&self) -> bool {
-        *self.state_machine.state.lock().await == ConnectionState::Disconnected
-    }
-    /// Wait for a state change to occur.
-    async fn wait_for_state_change(&self) {
-        // We clear this here, so it doesn't fire immediatly.
-        self.state_machine.state_change_watch.sender().clear();
-        self.state_machine
-            .state_change_watch
-            .dyn_receiver()
-            .unwrap()
-            .get()
-            .await;
-    }
-    /// Wait's for a state transition to [ConnectionState::Connected] and returns the
-    /// [ConnectionInfo].
     pub async fn wait_for_connection(&self) -> ConnectionInfo {
-        if let Some(info) = self.is_connected().await {
-            return info;
+        loop {
+            let ConnectionState::Connected(connection_info) = *self.connection_state.lock().await
+            else {
+                self.connection_state_signal.wait().await;
+                continue;
+            };
+            break connection_info;
         }
-        self.wait_for_state_change().await;
-        self.is_connected().await.unwrap()
     }
-    /// Wait's for a state transition to [ConnectionState::Disconnected].
     pub async fn wait_for_disconnection(&self) {
-        if !self.is_disconnected().await {
-            self.wait_for_state_change().await;
+        while matches!(
+            *self.connection_state.lock().await,
+            ConnectionState::Connected(_)
+        ) {
+            self.connection_state_signal.wait().await
         }
-    }
-    /// Signal a state transition to all other subscribers.
-    pub async fn signal_state_change(&self, state: ConnectionState) {
-        *self.state_machine.state.lock().await = state;
-        self.state_machine.state_change_watch.sender().send(());
     }
 }
 
@@ -212,7 +176,9 @@ pub struct StaSharedResources<'res> {
 
     // Networking.
     channel_state: ch::State<MTU, 4, 4>,
-    connection_state: ConnectionStateMachine,
+
+    // State tracking.
+    connection_state: ConnectionStateTracker,
 
     // Misc.
     interface_control: Option<LMacInterfaceControl<'res>>,
@@ -222,7 +188,7 @@ impl Default for StaSharedResources<'_> {
         Self {
             rx_management: StaRxManagement::default(),
             channel_state: ch::State::new(),
-            connection_state: ConnectionStateMachine::default(),
+            connection_state: ConnectionStateTracker::new(),
             interface_control: None,
         }
     }
@@ -264,9 +230,6 @@ impl Interface for StaInterface {
         );
         let (state_runner, rx_runner, tx_runner) = net_runner.split();
 
-        let [sta_control_connection_state, sta_runner_connection_state, sta_input_connection_state] =
-            sta_shared_state.connection_state.split();
-
         (
             (
                 StaControl {
@@ -274,7 +237,7 @@ impl Interface for StaInterface {
                     interface_control,
                     mac_address: MACAddress::new(mac_address),
                     rx_management: &sta_shared_state.rx_management,
-                    connection_state_subscriber: sta_control_connection_state,
+                    connection_state: &sta_shared_state.connection_state,
                 },
                 net_device,
             ),
@@ -284,12 +247,12 @@ impl Interface for StaInterface {
                 interface_control,
                 tx_runner,
                 state_runner,
-                connection_state_subscriber: Some(sta_runner_connection_state),
+                connection_state: &sta_shared_state.connection_state,
             },
             StaInput {
                 rx_runner,
                 rx_management: &sta_shared_state.rx_management,
-                connection_state_subscriber: sta_input_connection_state,
+                connection_state: &sta_shared_state.connection_state,
             },
         )
     }

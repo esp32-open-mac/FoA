@@ -13,26 +13,26 @@ use llc::SnapLlcFrame;
 use log::debug;
 
 use crate::{
-    ConnectionStateMachineSubscriber, StaRxManagement, ASSOCIATING, AUTHENTICATING, MTU,
-    NO_OPERATION, SCANNING,
+    ConnectionStateTracker, StaRxManagement, ASSOCIATING, AUTHENTICATING, MTU, NO_OPERATION,
+    SCANNING,
 };
 
 /// Interface input for the [StaInterface](crate::StaInterface).
 pub struct StaInput<'res> {
     pub(crate) rx_management: &'res StaRxManagement<'res>,
     pub(crate) rx_runner: RxRunner<'res, MTU>,
-    pub(crate) connection_state_subscriber: ConnectionStateMachineSubscriber<'res>,
+    pub(crate) connection_state: &'res ConnectionStateTracker,
 }
 impl StaInput<'_> {
     /// Forward a received data frame to higher layers.
     async fn handle_data_rx(
-        connection_state_subscriber: &ConnectionStateMachineSubscriber<'_>,
         rx_runner: &mut RxRunner<'_, MTU>,
         data_frame: DataFrame<'_, DataFrameReadPayload<'_>>,
+        connection_state: &ConnectionStateTracker,
     ) {
-        if connection_state_subscriber.is_disconnected().await {
+        let Some(_connection_info) = connection_state.connection_info().await else {
             return;
-        }
+        };
         let Some(destination_address) = data_frame.header.destination_address() else {
             return;
         };
@@ -92,12 +92,7 @@ impl<'res> InterfaceInput<'res> for StaInput<'res> {
                 let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
                     return;
                 };
-                Self::handle_data_rx(
-                    &self.connection_state_subscriber,
-                    &mut self.rx_runner,
-                    data_frame,
-                )
-                .await;
+                Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state).await;
             }
             // All other frames go to the background runner.
             _ => {
