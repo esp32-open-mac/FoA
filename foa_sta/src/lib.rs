@@ -28,7 +28,6 @@
 //! 2. Connecting to a network.
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use control::StaControl;
 use embassy_net::driver::HardwareAddress;
@@ -53,6 +52,10 @@ mod runner;
 pub use runner::StaRunner;
 mod input;
 pub use input::StaInput;
+mod operations;
+pub use operations::scan::ScanConfig;
+use rx_router::RxRouter;
+mod rx_router;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Errors than can occur, during STA operation.
@@ -71,46 +74,14 @@ pub enum StaError {
     AssociationFailure(IEEE80211StatusCode),
     /// An operation couldn't be carried out, due to an active connection.
     StillConnected,
+    /// The status of a connection couldn't be changed, because none was established.
+    NotConnected,
 }
 
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
-pub(crate) const NO_OPERATION: usize = 0;
-pub(crate) const SCANNING: usize = 1;
-pub(crate) const AUTHENTICATING: usize = 2;
-pub(crate) const ASSOCIATING: usize = 3;
-
 pub const MTU: usize = 1514;
-pub(crate) const DEFAULT_PHY_RATE: WiFiRate = WiFiRate::PhyRate9M;
-
-/// RX management for the STA interface.
-pub(crate) struct StaRxManagement<'res> {
-    bg_rx_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
-    user_operation_status: AtomicUsize,
-    user_rx_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
-}
-impl StaRxManagement<'_> {
-    /// This will set the new user operation status and clear the user RX queue.
-    pub fn begin_user_operation(&self, new_status: usize) {
-        self.user_operation_status
-            .store(new_status, Ordering::Relaxed);
-        self.user_rx_queue.clear();
-    }
-    /// Reset the user operation status.
-    pub fn clear_user_operation(&self) {
-        self.user_operation_status
-            .store(NO_OPERATION, Ordering::Relaxed);
-    }
-}
-impl Default for StaRxManagement<'_> {
-    fn default() -> Self {
-        Self {
-            bg_rx_queue: Channel::new(),
-            user_operation_status: AtomicUsize::new(NO_OPERATION),
-            user_rx_queue: Channel::new(),
-        }
-    }
-}
+pub(crate) const DEFAULT_PHY_RATE: WiFiRate = WiFiRate::PhyRate1ML;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Information about the current connection.
@@ -128,27 +99,32 @@ pub(crate) enum ConnectionState {
     Disconnected,
     Connected(ConnectionInfo),
 }
+/// Tracks the connection state.
 pub(crate) struct ConnectionStateTracker {
     connection_state: Mutex<NoopRawMutex, ConnectionState>,
     connection_state_signal: Signal<NoopRawMutex, ()>,
 }
 impl ConnectionStateTracker {
+    /// Create a new state tracker.
     pub const fn new() -> Self {
         Self {
             connection_state: Mutex::new(ConnectionState::Disconnected),
             connection_state_signal: Signal::new(),
         }
     }
+    /// Signal a new state.
     pub async fn signal_state(&self, new_state: ConnectionState) {
         *self.connection_state.lock().await = new_state;
         self.connection_state_signal.signal(());
     }
+    /// Get the connection info.
     pub async fn connection_info(&self) -> Option<ConnectionInfo> {
         match *self.connection_state.lock().await {
             ConnectionState::Connected(connection_info) => Some(connection_info),
             ConnectionState::Disconnected => None,
         }
     }
+    /// Wait for a connected state to be signaled.
     pub async fn wait_for_connection(&self) -> ConnectionInfo {
         loop {
             let ConnectionState::Connected(connection_info) = *self.connection_state.lock().await
@@ -159,6 +135,7 @@ impl ConnectionStateTracker {
             break connection_info;
         }
     }
+    /// Wait for a disconnected state to be signaled.
     pub async fn wait_for_disconnection(&self) {
         while matches!(
             *self.connection_state.lock().await,
@@ -171,8 +148,10 @@ impl ConnectionStateTracker {
 
 /// Shared resources for the [StaInterface].
 pub struct StaSharedResources<'res> {
-    // RX management.
-    rx_management: StaRxManagement<'res>,
+    // RX routing.
+    rx_router: RxRouter,
+    bg_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
+    user_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
 
     // Networking.
     channel_state: ch::State<MTU, 4, 4>,
@@ -186,7 +165,9 @@ pub struct StaSharedResources<'res> {
 impl Default for StaSharedResources<'_> {
     fn default() -> Self {
         Self {
-            rx_management: StaRxManagement::default(),
+            rx_router: RxRouter::new(),
+            bg_queue: Channel::new(),
+            user_queue: Channel::new(),
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
             interface_control: None,
@@ -236,13 +217,14 @@ impl Interface for StaInterface {
                     transmit_endpoint,
                     interface_control,
                     mac_address: MACAddress::new(mac_address),
-                    rx_management: &sta_shared_state.rx_management,
+                    rx_router: &sta_shared_state.rx_router,
+                    rx_queue: &sta_shared_state.user_queue,
                     connection_state: &sta_shared_state.connection_state,
                 },
                 net_device,
             ),
             StaRunner {
-                bg_rx: sta_shared_state.rx_management.bg_rx_queue.dyn_receiver(),
+                rx_queue: &sta_shared_state.bg_queue,
                 transmit_endpoint,
                 interface_control,
                 tx_runner,
@@ -251,7 +233,9 @@ impl Interface for StaInterface {
             },
             StaInput {
                 rx_runner,
-                rx_management: &sta_shared_state.rx_management,
+                rx_router: &sta_shared_state.rx_router,
+                bg_queue_sender: sta_shared_state.bg_queue.dyn_sender(),
+                user_queue_sender: sta_shared_state.user_queue.dyn_sender(),
                 connection_state: &sta_shared_state.connection_state,
             },
         )

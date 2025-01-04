@@ -7,6 +7,7 @@ use embassy_net::{
     tcp::client::{TcpClient, TcpClientState},
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
+use embassy_time::Duration;
 use embedded_io_async::Read;
 use esp_backtrace as _;
 use esp_hal::{
@@ -75,7 +76,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(net_runner)).unwrap();
 
     let network = sta_control.find_ess(None, SSID).await.unwrap();
-    sta_control.connect(&network, None).await.unwrap();
+    sta_control
+        .connect(&network, Some(Duration::from_secs(1)))
+        .await
+        .unwrap();
 
     info!("Connected to {}.", network.ssid);
 

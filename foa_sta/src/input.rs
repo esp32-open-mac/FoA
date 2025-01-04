@@ -1,10 +1,9 @@
-use core::sync::atomic::Ordering;
-
 use embassy_net_driver_channel::RxRunner;
+use embassy_sync::channel::DynamicSender;
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{esp32_wifi_hal_rs::BorrowedBuffer, interface::InterfaceInput};
 use ieee80211::{
-    common::{FrameType, ManagementFrameSubtype},
+    common::FrameType,
     data_frame::{DataFrame, DataFrameReadPayload},
     scroll::{Pread, Pwrite},
     GenericFrame,
@@ -13,13 +12,15 @@ use llc::SnapLlcFrame;
 use log::debug;
 
 use crate::{
-    ConnectionStateTracker, StaRxManagement, ASSOCIATING, AUTHENTICATING, MTU, NO_OPERATION,
-    SCANNING,
+    rx_router::{RxQueue, RxRouter},
+    ConnectionStateTracker, MTU,
 };
 
 /// Interface input for the [StaInterface](crate::StaInterface).
 pub struct StaInput<'res> {
-    pub(crate) rx_management: &'res StaRxManagement<'res>,
+    pub(crate) rx_router: &'res RxRouter,
+    pub(crate) bg_queue_sender: DynamicSender<'res, BorrowedBuffer<'res, 'res>>,
+    pub(crate) user_queue_sender: DynamicSender<'res, BorrowedBuffer<'res, 'res>>,
     pub(crate) rx_runner: RxRunner<'res, MTU>,
     pub(crate) connection_state: &'res ConnectionStateTracker,
 }
@@ -73,31 +74,17 @@ impl<'res> InterfaceInput<'res> for StaInput<'res> {
         let Ok(generic_frame) = GenericFrame::new(borrowed_buffer.mpdu_buffer(), false) else {
             return;
         };
-        match (
-            generic_frame.frame_control_field().frame_type(),
-            self.rx_management
-                .user_operation_status
-                .load(Ordering::Relaxed),
-        ) {
-            // If the frame is of interest for the user, we put it in the user queue.
-            (FrameType::Management(ManagementFrameSubtype::Authentication), AUTHENTICATING)
-            | (FrameType::Management(ManagementFrameSubtype::AssociationResponse), ASSOCIATING)
-            | (FrameType::Management(ManagementFrameSubtype::Beacon), SCANNING) => {
-                // It is important here, that we only try to send the buffer, since otherwise this
-                // will could wait forever and stall the LMAC.
-                let _ = self.rx_management.user_rx_queue.try_send(borrowed_buffer);
+        if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type() {
+            let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
+                return;
+            };
+            Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state).await;
+        } else {
+            let _ = match self.rx_router.target_queue_for_frame(&generic_frame) {
+                RxQueue::User => &self.user_queue_sender,
+                RxQueue::Background => &self.bg_queue_sender,
             }
-            // If it's data, we process it here directly.
-            (FrameType::Data(_), NO_OPERATION) => {
-                let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
-                    return;
-                };
-                Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state).await;
-            }
-            // All other frames go to the background runner.
-            _ => {
-                let _ = self.rx_management.bg_rx_queue.try_send(borrowed_buffer);
-            }
+            .try_send(borrowed_buffer);
         }
     }
 }
