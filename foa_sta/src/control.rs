@@ -173,9 +173,8 @@ impl<'res> StaControl<'res> {
             router_queue: RxQueue::User,
             interface_control: self.interface_control,
             transmit_endpoint: &self.transmit_endpoint,
-            mac_address: self.mac_address,
         }
-        .run(bss, timeout.unwrap_or(DEFAULT_TIMEOUT))
+        .run(bss, timeout.unwrap_or(DEFAULT_TIMEOUT), self.mac_address)
         .await?;
         self.connection_state
             .signal_state(ConnectionState::Connected(ConnectionInfo {

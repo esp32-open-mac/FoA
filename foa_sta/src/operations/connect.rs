@@ -37,11 +37,15 @@ pub struct ConnectionOperation<'a, 'res> {
     pub(crate) router_queue: RxQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
     pub(crate) transmit_endpoint: &'a LMacTransmitEndpoint<'res>,
-    pub(crate) mac_address: MACAddress,
 }
 impl<'a, 'res> ConnectionOperation<'a, 'res> {
     /// Authenticate with the BSS.
-    async fn do_auth(&self, bss: &BSS, timeout: Duration) -> Result<(), StaError> {
+    async fn do_auth(
+        &self,
+        bss: &BSS,
+        timeout: Duration,
+        mac_address: MACAddress,
+    ) -> Result<(), StaError> {
         let mut tx_buffer = self.transmit_endpoint.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
@@ -49,7 +53,7 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
                     header: ManagementFrameHeader {
                         receiver_address: bss.bssid,
                         bssid: bss.bssid,
-                        transmitter_address: self.mac_address,
+                        transmitter_address: mac_address,
                         sequence_control: SequenceControl::new(),
                         ..Default::default()
                     },
@@ -101,7 +105,12 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         }
     }
     /// Associate with the BSS.
-    async fn do_assoc(&self, bss: &BSS, timeout: Duration) -> Result<AssociationID, StaError> {
+    async fn do_assoc(
+        &self,
+        bss: &BSS,
+        timeout: Duration,
+        mac_address: MACAddress,
+    ) -> Result<AssociationID, StaError> {
         let mut tx_buffer = self.transmit_endpoint.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
@@ -109,7 +118,7 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
                     header: ManagementFrameHeader {
                         receiver_address: bss.bssid,
                         bssid: bss.bssid,
-                        transmitter_address: self.mac_address,
+                        transmitter_address: mac_address,
                         sequence_control: SequenceControl::new(),
                         ..Default::default()
                     },
@@ -161,7 +170,12 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
             Err(StaError::AssociationFailure(assoc_response.status_code))
         }
     }
-    pub async fn run(self, bss: &BSS, timeout: Duration) -> Result<AssociationID, StaError> {
+    pub async fn run(
+        self,
+        bss: &BSS,
+        timeout: Duration,
+        mac_address: MACAddress,
+    ) -> Result<AssociationID, StaError> {
         self.interface_control
             .set_and_lock_channel(bss.channel)
             .await
@@ -173,7 +187,7 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         // Just to make sure, these are set for connection.
         self.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
-            *self.mac_address,
+            *mac_address,
             None,
         );
         self.interface_control
@@ -183,8 +197,8 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         self.interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
 
-        self.do_auth(bss, timeout).await?;
-        let aid = self.do_assoc(bss, timeout).await?;
+        self.do_auth(bss, timeout, mac_address).await?;
+        let aid = self.do_assoc(bss, timeout, mac_address).await?;
 
         Ok(aid)
     }

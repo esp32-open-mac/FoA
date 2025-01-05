@@ -104,10 +104,10 @@ async fn main(spawner: Spawner) {
     let BodyReader::Chunked(mut chunked_reader) = response.body().reader() else {
         panic!()
     };
-    let parrot_buffer = mk_static!([u8; 1500], [0u8; 1500]);
+    let parrot_buffer = mk_static!([u8; 1119], [0u8; 1119]);
     let (_uart0_rx, mut uart0_tx) = Uart::new(
         peripherals.UART0,
-        uart::Config::default().rx_fifo_full_threshold(64),
+        uart::Config::default().with_rx_fifo_full_threshold(64),
         peripherals.GPIO3,
         peripherals.GPIO1,
     )
@@ -115,10 +115,7 @@ async fn main(spawner: Spawner) {
     .into_async()
     .split();
     loop {
-        let read = chunked_reader
-            .read(parrot_buffer.as_mut_slice())
-            .await
-            .unwrap();
-        let _ = uart0_tx.write_async(&parrot_buffer[..read]).await;
+        let _ = chunked_reader.read_exact(parrot_buffer).await;
+        let _ = uart0_tx.write_async(parrot_buffer).await;
     }
 }
