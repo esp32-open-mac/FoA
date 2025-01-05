@@ -290,13 +290,14 @@ pub struct LMacTransmitEndpoint<'res> {
 impl<'res> LMacTransmitEndpoint<'res> {
     /// Transmit a frame.
     ///
+    /// Returns the number of retries.
     /// For an exact description see [WiFi::transmit], as this is just a passthrough.
     /// NOTE: This will not check, whether an off channel operation is currently in progress.
     pub async fn transmit(
         &self,
         buffer: &mut [u8],
         tx_parameters: &TxParameters,
-    ) -> WiFiResult<()> {
+    ) -> WiFiResult<usize> {
         self.shared_state.wifi.transmit(buffer, tx_parameters).await
     }
     /// Allocate a [TxBuffer] from the buffer manager.
