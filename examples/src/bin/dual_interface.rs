@@ -14,13 +14,17 @@ use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
-use foa::{bg_task::MultiInterfaceRunner, FoAStackResources};
-use foa_sta::{StaInterface, StaNetDevice, StaSharedResources};
+use foa::bg_task::FoARunner;
+use foa::FoAResources;
+use foa::VirtualInterface;
+use foa_sta::StaNetDevice;
+use foa_sta::StaResources;
+use foa_sta::StaRunner;
 use log::info;
 use rand_core::RngCore;
 
-const SSID_ZERO: &str = "OpenWrt";
-const SSID_ONE: &str = "Freifunk";
+const SSID_ZERO: &str = "stuxnet";
+const SSID_ONE: &str = "stuxnet";
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -31,10 +35,12 @@ macro_rules! mk_static {
     }};
 }
 #[embassy_executor::task]
-async fn wifi_task(
-    mut wifi_runner: MultiInterfaceRunner<'static, StaInterface, StaInterface>,
-) -> ! {
-    wifi_runner.run().await
+async fn foa_task(mut foa_runner: FoARunner<'static>) -> ! {
+    foa_runner.run().await
+}
+#[embassy_executor::task(pool_size = 2)]
+async fn sta_task(mut sta_runner: StaRunner<'static, 'static>) -> ! {
+    sta_runner.run().await
 }
 #[embassy_executor::task(pool_size = 2)]
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
@@ -98,22 +104,32 @@ async fn main(spawner: Spawner) {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
-    let stack_resources = mk_static!(FoAStackResources<StaSharedResources, StaSharedResources>, FoAStackResources::new());
-    let (
-        (mut sta_control_zero, net_device_zero),
-        (mut sta_control_one, net_device_one),
-        wifi_runner,
-    ) = foa::new_with_multiple_interfaces::<StaInterface, StaInterface>(
+    let stack_resources = mk_static!(FoAResources, FoAResources::new());
+    let ([sta_vif0, sta_vif1, ..], foa_runner) = foa::init(
         stack_resources,
         peripherals.WIFI,
         peripherals.RADIO_CLK,
         peripherals.ADC2,
-        (),
-        (),
-    )
-    .await;
-    spawner.spawn(wifi_task(wifi_runner)).unwrap();
+    );
+    spawner.spawn(foa_task(foa_runner)).unwrap();
 
+    let sta_resources = mk_static!(
+        (StaResources<'static>, StaResources<'static>),
+        (StaResources::default(), StaResources::default())
+    );
+    let (mut sta_control_zero, sta_runner_zero, net_device_zero) = foa_sta::new_sta_interface(
+        mk_static!(VirtualInterface<'static>, sta_vif0),
+        &mut sta_resources.0,
+        None,
+    );
+    spawner.spawn(sta_task(sta_runner_zero)).unwrap();
+
+    let (mut sta_control_one, sta_runner_one, net_device_one) = foa_sta::new_sta_interface(
+        mk_static!(VirtualInterface<'static>, sta_vif1),
+        &mut sta_resources.1,
+        None,
+    );
+    spawner.spawn(sta_task(sta_runner_one)).unwrap();
     let mut mac_address = [0u8; 6];
     let mut rng = Rng::new(peripherals.RNG);
     rng.fill_bytes(mac_address.as_mut_slice());

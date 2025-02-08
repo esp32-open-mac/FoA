@@ -1,162 +1,139 @@
 #![no_std]
 #![allow(async_fn_in_trait)]
 
-use bg_task::{MultiInterfaceRunner, SingleInterfaceRunner};
-use esp32_wifi_hal_rs::{DMAResources, WiFi};
-use esp_hal::{
-    efuse::Efuse,
-    peripherals::{ADC2, RADIO_CLK, WIFI},
+use core::{array, mem};
+
+use bg_task::FoARunner;
+use embassy_sync::{
+    blocking_mutex::raw::NoopRawMutex,
+    channel::{Channel, DynamicReceiver},
 };
-use interface::Interface;
-use lmac::SharedLMacState;
-use log::debug;
-use tx_buffer_management::TxBufferManager;
+use esp_config::esp_config_int;
+use esp_hal::peripherals::{ADC2, RADIO_CLK, WIFI};
+use esp_wifi_hal::{BorrowedBuffer, DMAResources, RxFilterBank, ScanningMode, WiFi};
+use lmac::{LMacInterfaceControl, SharedLMacState};
 
 pub mod bg_task;
-pub mod interface;
 pub mod lmac;
+// mod rx_arc_pool;
 pub mod tx_buffer_management;
 
-pub use esp32_wifi_hal_rs;
+pub use esp_wifi_hal;
+use tx_buffer_management::TxBufferManager;
+
+const RX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_COUNT");
+const RX_BUFFER_SIZE: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_SIZE");
+const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_CONFIG_RX_QUEUE_LEN");
+const TX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_COUNT");
+const TX_BUFFER_SIZE: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_SIZE");
+
+/// A frame received from the driver.
+pub type ReceivedFrame<'res> = BorrowedBuffer<'res>;
+/// A receiver to the RX queue of an interface.
+pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
 
 /// The resources required by the WiFi stack.
-pub struct FoAStackResources<'a, IfZeroResources: Default, IfOneResources: Default = ()> {
-    dma_resources: DMAResources<1600, 10>,
-    tx_resources: [[u8; 1600]; 10],
-    tx_buffer_manager: Option<TxBufferManager<'a, 1600, 10>>,
-    shared_lmac_state: Option<SharedLMacState<'a>>,
-    if_zero_resources: IfZeroResources,
-    if_one_resources: IfOneResources,
+pub struct FoAResources {
+    dma_resources: DMAResources<RX_BUFFER_SIZE, RX_BUFFER_COUNT>,
+    tx_buffers: [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
+    tx_buffer_manager: Option<TxBufferManager<TX_BUFFER_COUNT>>,
+    shared_lmac_state: Option<SharedLMacState>,
+    rx_queues: [Channel<NoopRawMutex, ReceivedFrame<'static>, RX_QUEUE_LEN>; WiFi::INTERFACE_COUNT],
 }
-impl<IfZeroResources: Default, IfOneResources: Default>
-    FoAStackResources<'_, IfZeroResources, IfOneResources>
-{
+impl FoAResources {
     pub fn new() -> Self {
         Self {
             dma_resources: DMAResources::new(),
-            tx_resources: [[0u8; 1600]; 10],
+            tx_buffers: [[0u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
             tx_buffer_manager: None,
             shared_lmac_state: None,
-            if_zero_resources: IfZeroResources::default(),
-            if_one_resources: IfOneResources::default(),
+            rx_queues: [const { Channel::new() }; WiFi::INTERFACE_COUNT],
         }
     }
 }
-impl<IfZeroResources: Default, IfOneResources: Default> Default
-    for FoAStackResources<'_, IfZeroResources, IfOneResources>
-{
+impl Default for FoAResources {
     fn default() -> Self {
         Self::new()
     }
 }
-
-/// Initialize FoA with two interfaces.
-pub async fn new_with_multiple_interfaces<'res, IfZero: Interface, IfOne: Interface>(
-    resources: &'res mut FoAStackResources<
-        'res,
-        IfZero::SharedResourcesType<'res>,
-        IfOne::SharedResourcesType<'res>,
-    >,
-    wifi: WIFI,
-    radio_clock: RADIO_CLK,
-    adc2: ADC2,
-    if_zero_init_info: IfZero::InitInfo,
-    if_one_init_info: IfOne::InitInfo,
-) -> (
-    IfZero::ControlType<'res>,
-    IfOne::ControlType<'res>,
-    MultiInterfaceRunner<'res, IfZero, IfOne>,
-) {
-    resources.shared_lmac_state = Some(SharedLMacState::new(WiFi::new(
-        wifi,
-        radio_clock,
-        adc2,
-        &mut resources.dma_resources,
-    )));
-    resources.tx_buffer_manager = Some(TxBufferManager::new(&mut resources.tx_resources));
-    let tx_buffer_manager = resources.tx_buffer_manager.as_mut().unwrap();
-    let (receive_endpoint, transmit_endpoint, if_zero_lmac_control, if_one_lmac_control) =
-        resources
-            .shared_lmac_state
-            .as_mut()
-            .unwrap()
-            .split(tx_buffer_manager.dyn_tx_buffer_manager());
-    let mut mac_address = Efuse::read_base_mac_address();
-    let (if_zero_control, if_zero_runner, if_zero_input) = IfZero::new(
-        &mut resources.if_zero_resources,
-        if_zero_init_info,
-        transmit_endpoint,
-        if_zero_lmac_control,
-        mac_address,
-    )
-    .await;
-
-    // The MAC address for the second interface is the same as the first interface, only with two
-    // added to the first octet.
-    mac_address[5] += 2;
-    let (if_one_control, if_one_runner, if_one_input) = IfOne::new(
-        &mut resources.if_one_resources,
-        if_one_init_info,
-        transmit_endpoint,
-        if_one_lmac_control,
-        mac_address,
-    )
-    .await;
-    debug!(
-        "Initialized Wi-Fi stack with {} and {} interfaces.",
-        IfZero::NAME,
-        IfOne::NAME
-    );
-    (
-        if_zero_control,
-        if_one_control,
-        MultiInterfaceRunner {
-            receive_endpoint,
-            if_zero_runner,
-            if_zero_input,
-            if_one_runner,
-            if_one_input,
-        },
-    )
+/// A virtual interface (VIF).
+///
+/// This is intended to be used by interface implementations, which should take in a mutable
+/// reference to a VIF.
+pub struct VirtualInterface<'res> {
+    interface_control: LMacInterfaceControl<'res>,
+    rx_queue_receiver: RxQueueReceiver<'res>,
 }
-/// Initialize FoA with a single interface.
-pub async fn new_with_single_interface<'res, If: Interface>(
-    resources: &'res mut FoAStackResources<'res, If::SharedResourcesType<'res>, ()>,
+impl<'res> VirtualInterface<'res> {
+    /// Split the virtual interface into it's components.
+    ///
+    /// NOTE: This is intended for interface implementations. User code shouldn't call this,
+    /// although nothing will happen.
+    pub fn split<'a>(
+        &'a mut self,
+    ) -> (
+        &'a mut LMacInterfaceControl<'res>,
+        &'a mut RxQueueReceiver<'res>,
+    ) {
+        (&mut self.interface_control, &mut self.rx_queue_receiver)
+    }
+    pub fn reset(&mut self) {
+        // We can't call clear on a DynamicReceiver, so this is the best we can do for now.
+        // This isn't too bad, since this will only be called rarely and the RX queues shouldn't be
+        // that long.
+        while self.rx_queue_receiver.try_receive().is_ok() {}
+        self.interface_control.unlock_channel();
+        self.interface_control
+            .set_scanning_mode(ScanningMode::Disabled);
+        self.interface_control
+            .set_filter_status(RxFilterBank::BSSID, false);
+        self.interface_control
+            .set_filter_status(RxFilterBank::ReceiverAddress, false);
+    }
+}
+
+/// Initialise FoA.
+pub fn init(
+    resources: &mut FoAResources,
     wifi: WIFI,
     radio_clock: RADIO_CLK,
     adc2: ADC2,
-    if_init_info: If::InitInfo,
-) -> (If::ControlType<'res>, SingleInterfaceRunner<'res, If>) {
-    resources.shared_lmac_state = Some(SharedLMacState::new(WiFi::new(
-        wifi,
-        radio_clock,
-        adc2,
-        &mut resources.dma_resources,
-    )));
-    resources.tx_buffer_manager = Some(TxBufferManager::new(&mut resources.tx_resources));
-    let tx_buffer_manager = resources.tx_buffer_manager.as_mut().unwrap();
-    let (receive_endpoint, transmit_endpoint, if_zero_lmac_control, _if_one_lmac_control) =
-        resources
-            .shared_lmac_state
-            .as_mut()
-            .unwrap()
-            .split(tx_buffer_manager.dyn_tx_buffer_manager());
-
-    let (if_control, if_runner, if_input) = If::new(
-        &mut resources.if_zero_resources,
-        if_init_info,
-        transmit_endpoint,
-        if_zero_lmac_control,
-        Efuse::read_base_mac_address(),
-    )
-    .await;
-    debug!("Initialized Wi-Fi stack with {} interface.", If::NAME);
+) -> ([VirtualInterface<'_>; WiFi::INTERFACE_COUNT], FoARunner<'_>) {
+    // This is for all transmutes here.
+    // # SAFETY:
+    // We do this only to avoid self referential structs. All of the destination lifetimes are the
+    // lifetime of the resources struct and therefore valid.
+    let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.dma_resources);
+    resources.shared_lmac_state = Some(SharedLMacState::new(wifi));
+    resources.tx_buffer_manager = Some(unsafe { TxBufferManager::new(&mut resources.tx_buffers) });
+    let (lmac_receive_endpoint, lmac_interface_controls) =
+        resources.shared_lmac_state.as_mut().unwrap().split(
+            resources
+                .tx_buffer_manager
+                .as_ref()
+                .unwrap()
+                .dyn_tx_buffer_manager(),
+        );
+    let rx_queue_senders =
+        array::from_fn(|i| unsafe { mem::transmute(resources.rx_queues[i].dyn_sender()) });
+    let virtual_interfaces =
+        lmac_interface_controls.map(|lmac_interface_control| VirtualInterface {
+            rx_queue_receiver: unsafe {
+                mem::transmute::<
+                    DynamicReceiver<'_, ReceivedFrame<'static>>,
+                    DynamicReceiver<'_, ReceivedFrame<'_>>,
+                >(
+                    resources.rx_queues[lmac_interface_control.get_filter_interface()]
+                        .dyn_receiver(),
+                )
+            },
+            interface_control: lmac_interface_control,
+        });
     (
-        if_control,
-        SingleInterfaceRunner {
-            receive_endpoint,
-            if_runner,
-            if_input,
+        virtual_interfaces,
+        FoARunner {
+            lmac_receive_endpoint,
+            rx_queue_senders,
         },
     )
 }

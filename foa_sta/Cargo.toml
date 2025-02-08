@@ -5,14 +5,18 @@ edition = "2021"
 
 [dependencies]
 embassy-futures = "0.1.1"
-embassy-net = { version = "0.5.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
+embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
 embassy-net-driver-channel = "0.3.0"
 embassy-sync = "0.6.1"
-embassy-time = "0.3.2"
-ethernet = { git = "https://github.com/Frostie314159/ethernet", version = "0.1.4", default-features = false }
+embassy-time = "0.4.0"
+ethernet = { version = "0.1.5", default-features = false }
 foa = { path = "../foa/" }
 heapless = "0.8.0"
-ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs", version = "0.5.0", default-features = false }
-llc = { git = "https://github.com/Frostie314159/llc-rs", version = "0.1.0", default-features = false }
+ieee80211 = { version = "0.5.3", default-features = false }
+llc-rs = "0.1.0"
 log = "0.4.22"
+
+[features]
+esp32 = ["foa/esp32"]
+esp32s2 = ["foa/esp32s2"]
 

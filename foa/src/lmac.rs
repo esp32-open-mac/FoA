@@ -4,7 +4,8 @@
 //! This achieved, by allowing an interface to lock the channel, on which the stack operates. This
 //! prevents the other interface from changing the channel. If both interfaces attempt to lock the
 //! same channel, they'll both have the lock on the channel and neither can change it, without the
-//! other unlocking the channel beforehand. This is done through the [LMacInterfaceControl::set_and_lock_channel] and [LMacInterfaceControl::unlock_channel] APIs.
+//! other unlocking the channel beforehand. This is done through the [LMacInterfaceControl::lock_channel]
+//! and [LMacInterfaceControl::unlock_channel] APIs.
 //!
 //! The issue with this design is, that it makes scanning impossible, if the channel is already
 //! locked by another interfaces. To fix this, off channel operations are implemented, which allow
@@ -18,51 +19,84 @@
 //! is due to shared RX access being very hard to implement. Instead, frames addressed to an
 //! interface will be passed to [interface_input](crate::interface::InterfaceInput::interface_input), by the MAC task.
 use core::{
+    array,
     cell::{Cell, RefCell},
     future::poll_fn,
     task::Poll,
 };
 
+use embassy_futures::join::join_array;
 use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    mutex::Mutex,
+    blocking_mutex::{self, raw::NoopRawMutex},
     waitqueue::AtomicWaker,
-    watch::{DynReceiver, Watch},
+    watch::Watch,
 };
-use esp32_wifi_hal_rs::{
-    BorrowedBuffer, RxFilterBank, RxFilterInterface, TxErrorBehaviour, TxParameters, WiFi,
-    WiFiRate, WiFiResult,
+use esp_hal::efuse::Efuse;
+use esp_wifi_hal::{
+    BorrowedBuffer, RxFilterBank, ScanningMode, TxErrorBehaviour, TxParameters, WiFi, WiFiRate,
+    WiFiResult,
 };
 
 use crate::tx_buffer_management::{DynTxBufferManager, TxBuffer};
 
-fn get_opposite_interface(rx_filter_interface: RxFilterInterface) -> RxFilterInterface {
-    if rx_filter_interface == RxFilterInterface::Zero {
-        RxFilterInterface::One
-    } else {
-        RxFilterInterface::Zero
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// The status of the channel lock.
-enum ChannelState {
-    /// The channel is not locked.
-    NotLocked,
-    /*
-    /// The channel isn't fully locked yet, since the specified interface is currently performing
-    /// actions to bring the interface into a state, where the channel can be locked.
-    InBringUpByInterface {
-        rx_filter_interface: RxFilterInterface,
-        channel: u8,
-    },
-    */
-    /// The channel is locked by the specified interface.
-    LockedByInterface(RxFilterInterface),
-    /// Both interfaces are locked to the same channel.
-    LockedByBothInterfaces,
-    /// An off channel operation is in progress.
-    OffChannelOperationInProgress,
+struct ChannelState {
+    locks: Option<([bool; WiFi::INTERFACE_COUNT], u8)>,
+    off_channel_operation_interface: Option<usize>,
+}
+impl ChannelState {
+    /// Try to lock the channel for the specified interface.
+    ///
+    /// Returns `true` if the channel changed.
+    pub fn lock_channel(&mut self, interface: usize, channel: u8) -> Result<bool, LMacError> {
+        match self.locks {
+            Some((ref mut interfaces, ref mut locked_channel)) => {
+                // First we check, whether the channel is already locked by this interface.
+                let already_locked_by_interface = interfaces[interface];
+                // Then we check if the requested channel is the one that's already locked.
+                let same_channel = *locked_channel == channel;
+                // Then we check how many interfaces have locked the channel as well.
+                let interface_lock_count = interfaces.iter().filter(|locked| **locked).count();
+                let mut changed = false;
+                if !same_channel && !already_locked_by_interface {
+                    // Another interface has lock on a different channel, so we can't change it.
+                    return Err(LMacError::ChannelLockedByOtherInterface);
+                } else if already_locked_by_interface && interface_lock_count == 1 {
+                    // The interface already has exclusive lock on the channel and can therefore
+                    // freely change it.
+                    *locked_channel = channel;
+                    changed = true;
+                } else if !already_locked_by_interface && same_channel {
+                    // The interface does not have lock on the interface yet, but attempts to lock
+                    // the same channel.
+                    interfaces[interface] = true;
+                    changed = true;
+                }
+                Ok(changed)
+            }
+            None => {
+                // No other interface has lock currently.
+                self.locks = Some((array::from_fn(|i| i == interface), channel));
+                Ok(true)
+            }
+        }
+    }
+    /// Unlock the channel for the specified interface.
+    pub fn unlock_channel(&mut self, interface: usize) {
+        if let Some((ref mut interfaces, _)) = self.locks {
+            if interfaces[interface] {
+                interfaces[interface] = false;
+                if *interfaces == [false; WiFi::INTERFACE_COUNT] {
+                    self.locks = None;
+                }
+            }
+        }
+    }
+    /// Check whether an off channel operation is in progress.
+    pub fn is_off_channel_operation_in_progress(&self) -> bool {
+        self.off_channel_operation_interface.is_some()
+    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OffChannelRequestState {
@@ -159,71 +193,43 @@ impl OffChannelRequester {
     }
 }
 
-pub(crate) struct SharedLMacState<'res> {
-    wifi: WiFi<'res>,
+pub(crate) struct SharedLMacState {
+    wifi: WiFi<'static>,
     // Channel Management
-    channel_state: critical_section::Mutex<RefCell<ChannelState>>,
-    if_zero_off_channel_requester: OffChannelRequester,
-    if_one_off_channel_requester: OffChannelRequester,
-    off_channel_completion_signal: Watch<NoopRawMutex, (), 2>,
+    channel_state: blocking_mutex::NoopMutex<RefCell<ChannelState>>,
+    off_channel_requesters: [OffChannelRequester; WiFi::INTERFACE_COUNT],
+    off_channel_completion_signal: Watch<NoopRawMutex, (), { WiFi::INTERFACE_COUNT }>,
 }
-impl<'res> SharedLMacState<'res> {
-    pub const fn new(wifi: WiFi<'res>) -> Self {
+impl SharedLMacState {
+    pub const fn new(wifi: WiFi<'_>) -> Self {
         Self {
-            wifi,
-            channel_state: critical_section::Mutex::new(RefCell::new(ChannelState::NotLocked)),
-            if_zero_off_channel_requester: OffChannelRequester::new(),
-            if_one_off_channel_requester: OffChannelRequester::new(),
+            wifi: unsafe { core::mem::transmute::<WiFi<'_>, WiFi<'static>>(wifi) },
+            channel_state: blocking_mutex::NoopMutex::new(RefCell::new(ChannelState {
+                locks: None,
+                off_channel_operation_interface: None,
+            })),
+            off_channel_requesters: [const { OffChannelRequester::new() }; WiFi::INTERFACE_COUNT],
             off_channel_completion_signal: Watch::new(),
         }
     }
-    pub fn split(
+    pub fn split<'res>(
         &'res mut self,
         dyn_tx_buffer_manager: DynTxBufferManager<'res>,
     ) -> (
         LMacReceiveEndpoint<'res>,
-        LMacTransmitEndpoint<'res>,
-        LMacInterfaceControl<'res>,
-        LMacInterfaceControl<'res>,
+        [LMacInterfaceControl<'res>; WiFi::INTERFACE_COUNT],
     ) {
         (
             LMacReceiveEndpoint { shared_state: self },
-            LMacTransmitEndpoint {
+            core::array::from_fn(|i| LMacInterfaceControl {
                 shared_state: self,
+                rx_filter_interface: i,
                 dyn_tx_buffer_manager,
-            },
-            LMacInterfaceControl {
-                shared_state: self,
-                rx_filter_interface: RxFilterInterface::Zero,
-                off_channel_completion_receiver: Mutex::new(
-                    self.off_channel_completion_signal.dyn_receiver().unwrap(),
-                ),
-            },
-            LMacInterfaceControl {
-                shared_state: self,
-                rx_filter_interface: RxFilterInterface::One,
-                off_channel_completion_receiver: Mutex::new(
-                    self.off_channel_completion_signal.dyn_receiver().unwrap(),
-                ),
-            },
+            }),
         )
     }
     fn get_channel_state(&self) -> ChannelState {
-        critical_section::with(|cs| *self.channel_state.borrow_ref(cs))
-    }
-    fn set_channel_state(&self, channel_state: ChannelState) {
-        critical_section::with(|cs| *self.channel_state.borrow_ref_mut(cs) = channel_state);
-    }
-    /// Returns the [OffChannelRequester] for the interface.
-    fn get_off_channel_requester_for_interface(
-        &self,
-        rx_filter_interface: RxFilterInterface,
-    ) -> &OffChannelRequester {
-        match rx_filter_interface {
-            RxFilterInterface::Zero => &self.if_zero_off_channel_requester,
-            RxFilterInterface::One => &self.if_one_off_channel_requester,
-            _ => unreachable!(),
-        }
+        self.channel_state.lock(|rc| *rc.borrow())
     }
 }
 
@@ -232,39 +238,47 @@ impl<'res> SharedLMacState<'res> {
 /// When dropped, this will terminate the off channel operation and reset the channel and scanning
 /// mode.
 pub struct OffChannelOperation<'a, 'res> {
-    transmit_endpoint: &'a LMacTransmitEndpoint<'res>,
-    previous_channel_state: ChannelState,
-    previous_channel: u8,
-    rx_filter_interface: RxFilterInterface,
+    interface_control: &'a LMacInterfaceControl<'res>,
+    previously_locked_channel: Option<u8>,
+    rx_filter_interface: usize,
 }
 impl OffChannelOperation<'_, '_> {
     /// Set the channel.
     pub fn set_channel(&mut self, channel: u8) -> Result<(), LMacError> {
-        self.transmit_endpoint
+        self.interface_control
             .shared_state
             .wifi
             .set_channel(channel)
             .map_err(|_| LMacError::InvalidChannel)
     }
-    pub fn set_scanning_mode(&mut self, enabled: bool) {
-        self.transmit_endpoint
+    /// Set the scanning mode.
+    pub fn set_scanning_mode(&mut self, scanning_mode: ScanningMode) {
+        let _ = self
+            .interface_control
             .shared_state
             .wifi
-            .set_scanning_mode(self.rx_filter_interface, enabled);
+            .set_scanning_mode(self.rx_filter_interface, scanning_mode);
     }
 }
 impl Drop for OffChannelOperation<'_, '_> {
     fn drop(&mut self) {
-        let _ = self.set_channel(self.previous_channel);
-        self.set_scanning_mode(false);
-        critical_section::with(|cs| {
-            *self
-                .transmit_endpoint
-                .shared_state
-                .channel_state
-                .borrow_ref_mut(cs) = self.previous_channel_state;
-        });
-        self.transmit_endpoint
+        // This accounts for the locked channel having changed during the operation.
+        if let Some(channel) = self
+            .interface_control
+            .shared_state
+            .get_channel_state()
+            .locks
+            .map(|(_, channel)| channel)
+            .or(self.previously_locked_channel)
+        {
+            let _ = self.set_channel(channel);
+        }
+        self.set_scanning_mode(ScanningMode::Disabled);
+        self.interface_control
+            .shared_state
+            .channel_state
+            .lock(|cs| cs.borrow_mut().off_channel_operation_interface = None);
+        self.interface_control
             .shared_state
             .off_channel_completion_signal
             .sender()
@@ -273,21 +287,55 @@ impl Drop for OffChannelOperation<'_, '_> {
 }
 
 pub(crate) struct LMacReceiveEndpoint<'res> {
-    shared_state: &'res SharedLMacState<'res>,
+    shared_state: &'res SharedLMacState,
 }
 impl<'res> LMacReceiveEndpoint<'res> {
     /// Wait for a frame to arrive from the driver.
-    pub async fn receive(&mut self) -> BorrowedBuffer<'res, 'res> {
+    pub async fn receive(&mut self) -> BorrowedBuffer<'res> {
         self.shared_state.wifi.receive().await
     }
 }
-#[derive(Clone, Copy)]
-/// Transmit access to the LMAC.
-pub struct LMacTransmitEndpoint<'res> {
-    shared_state: &'res SharedLMacState<'res>,
+/// An interface bringup operation.
+///
+/// This will unlock the interface if dropped and can therefore be used to make a connection
+/// bringup cancel safe. Calling [InterfaceBringupOperation::complete] indicates, that the
+/// interface has been successfully brought up.
+///
+/// # Example
+/// Consider an STA implementation. When connecting to a network, the implementation will attempt
+/// to acquire channel lock before the connection setup. If that setup fails or the future is
+/// cancelled, the channel should be unlocked again.
+pub struct InterfaceBringupOperation<'a, 'res> {
+    lmac_interface_control: &'a LMacInterfaceControl<'res>,
+}
+impl InterfaceBringupOperation<'_, '_> {
+    /// Mark the interface bringup as completed, without unlocking the channel.
+    pub fn complete(self) {
+        core::mem::forget(self);
+    }
+}
+impl Drop for InterfaceBringupOperation<'_, '_> {
+    fn drop(&mut self) {
+        self.lmac_interface_control.unlock_channel();
+    }
+}
+/// Control over the interface.
+pub struct LMacInterfaceControl<'res> {
+    shared_state: &'res SharedLMacState,
+    /// The RX filter interface, this logical interface corresponds to.
+    rx_filter_interface: usize,
+    /// Access to the TX buffer manager.
     dyn_tx_buffer_manager: DynTxBufferManager<'res>,
 }
-impl<'res> LMacTransmitEndpoint<'res> {
+impl<'res> LMacInterfaceControl<'res> {
+    /// Some default transmission parameters.
+    pub const DEFAULT_TX_PARAMETERS: TxParameters = TxParameters {
+        rate: WiFiRate::PhyRate1ML,
+        duration: 0,
+        override_seq_num: true,
+        tx_error_behaviour: TxErrorBehaviour::RetryUntil(4),
+        tx_timeout: 10,
+    };
     /// Transmit a frame.
     ///
     /// Returns the number of retries.
@@ -297,68 +345,21 @@ impl<'res> LMacTransmitEndpoint<'res> {
         &self,
         buffer: &mut [u8],
         tx_parameters: &TxParameters,
+        wait_for_ack: bool,
     ) -> WiFiResult<usize> {
-        self.shared_state.wifi.transmit(buffer, tx_parameters).await
+        self.shared_state
+            .wifi
+            .transmit(
+                buffer,
+                tx_parameters,
+                wait_for_ack.then_some(self.rx_filter_interface),
+            )
+            .await
     }
     /// Allocate a [TxBuffer] from the buffer manager.
     pub async fn alloc_tx_buf(&self) -> TxBuffer {
         self.dyn_tx_buffer_manager.alloc().await
     }
-
-    // TODO: Implement after congress.
-    // To anyone who reads this: I was on a pretty tight schedule.
-    /*
-    pub async fn begin_off_channel_operation<'a>(&'a self) -> OffChannelOperation<'a, 'res> {
-        // We shouldn't hold the lock until permission is granted, so we just copy out the value
-        // here.
-        let channel_state = self.shared_state.get_channel_state();
-        match channel_state {
-            ChannelState::NotLocked => {}
-            ChannelState::LockedByInterface(interface) => {
-                self.shared_state
-                    .get_off_channel_requester_for_interface(interface)
-                    .request()
-                    .await
-            }
-            ChannelState::LockedByBothInterfaces => {
-                join(
-                    self.shared_state.if_zero_off_channel_requester.request(),
-                    self.shared_state.if_one_off_channel_requester.request(),
-                )
-                .await;
-            }
-            ChannelState::OffChannelOperationInProgress => {
-                // The idea is, that if an off channel operation is completed, we signal this
-                // through the off_channel_completion_signal. If this signal is already signaled,
-                // but the channel_state is still set to OffChannelOperationInProgress, we reset
-                // the signal. This way, we ensure that everyone who needs to know the end of an
-                // off channel operation gets informed, before we reset the signal.
-                self.shared_state
-                    .off_channel_completion_signal
-                    .sender()
-                    .send(());
-            }
-        }
-        self.shared_state
-            .set_channel_state(ChannelState::OffChannelOperationInProgress);
-        OffChannelOperation {
-            transmit_endpoint: self,
-            previous_channel_state: channel_state,
-            previous_channel: self.shared_state.wifi.get_channel(),
-        }
-
-    }
-    */
-}
-/// Control over the interface.
-pub struct LMacInterfaceControl<'res> {
-    shared_state: &'res SharedLMacState<'res>,
-    /// The RX filter interface, this logical interface corresponds to.
-    rx_filter_interface: RxFilterInterface,
-    /// Receiver for off channel completion notifications.
-    off_channel_completion_receiver: Mutex<NoopRawMutex, DynReceiver<'res, ()>>,
-}
-impl LMacInterfaceControl<'_> {
     /// Set the filter parameters.
     ///
     /// NOTE: You need to set **and** enable the filter.
@@ -368,7 +369,7 @@ impl LMacInterfaceControl<'_> {
         mac_address: [u8; 6],
         mask: Option<[u8; 6]>,
     ) {
-        self.shared_state.wifi.set_filter(
+        let _ = self.shared_state.wifi.set_filter(
             bank,
             self.rx_filter_interface,
             mac_address,
@@ -379,183 +380,140 @@ impl LMacInterfaceControl<'_> {
     ///
     /// NOTE: You need to set **and** enable the filter.
     pub fn set_filter_status(&self, bank: RxFilterBank, enabled: bool) {
-        self.shared_state
+        let _ = self
+            .shared_state
             .wifi
             .set_filter_status(bank, self.rx_filter_interface, enabled);
     }
     /// Set the scanning mode of the RX filter interface.
     ///
     /// Enabling this, tells the hardware to forward any broadcast MPDUs to this interface.
-    pub fn set_scanning_mode(&self, enabled: bool) {
-        self.shared_state
+    pub fn set_scanning_mode(&self, scanning_mode: ScanningMode) {
+        let _ = self
+            .shared_state
             .wifi
-            .set_scanning_mode(self.rx_filter_interface, enabled);
+            .set_scanning_mode(self.rx_filter_interface, scanning_mode);
     }
-    // TODO: I will implement this after 38c3, to make the connection bring up cancel safe.
-    /*
-    pub async fn begin_interface_bringup_operation(&self, channel: u8) {
-        let previous_channel_state = self.shared_state.get_channel_state();
-        let new_channel_state = ChannelState::InBringUpByInterface {
-            rx_filter_interface: self.rx_filter_interface,
-            channel,
-        };
-        if previous_channel_state != new_channel_state {
-            match previous_channel_state {
-                ChannelState::NotLocked => {
-                    self.shared_state.set_channel_state(new_channel_state);
-                }
-                ChannelState::InBringUpByInterface { .. } => {}
-                ChannelState::LockedByInterface(rx_filter_interface) => {}
-            }
-        }
-    } */
-
-    /// Try to set the channel and if possible lock on to it.
-    ///
-    /// If the channel isn't locked, this will lock it and set channel.
-    /// This will fail, if the other interface has already locked the channel or both, and the requested
-    /// channel and the locked channel aren't the same. If they're, this function doesn't do
-    /// anything.
-    /// If the channel is only locked by this interface, it is changed.
-    pub async fn set_and_lock_channel(&self, channel: u8) -> Result<(), LMacError> {
-        // We'll wait for any off channel operation to complete here. If none are in progress, this
-        // returns immediately.
-        //  We save the previous state here.
-        let previous_channel_state = self.shared_state.get_channel_state();
-        // This is the state we'll be in after locking.
-        let new_channel_state = ChannelState::LockedByInterface(self.rx_filter_interface);
-
-        // If we are already in the state, we would be in after this operation, we don't need to
-        // change anything, so we just set the channel to the requested number.
-        if previous_channel_state != new_channel_state {
-            match previous_channel_state {
-                // This is the simplest case, where we can just set it to the new state.
-                ChannelState::NotLocked => {
-                    self.shared_state.set_channel_state(new_channel_state);
-                }
-                // Due to the if statement above, this checks whether the other interface has
-                // already locked the channel state.
-                ChannelState::LockedByInterface(_) => {
-                    // If we're lucky and the locked channel and the requested channel match, we
-                    // can just set the channel state to locked by both. Otherwise, we return an
-                    // error.
-                    if self.shared_state.wifi.get_channel() == channel {
-                        self.shared_state
-                            .set_channel_state(ChannelState::LockedByBothInterfaces);
-                    } else {
-                        return Err(LMacError::ChannelLockedByOtherInterface);
-                    }
-                }
-                // This means, that we already locked the channel and both interfaces are locked on
-                // to the same channel. Due to this, we can't change the channel until the other
-                // interface unlocks it.
-                ChannelState::LockedByBothInterfaces => {
-                    return Err(LMacError::ChannelLockedByOtherInterface);
-                }
-                // Due to the call to wait_for_off_channel_completion, this is unreachable.
-                _ => unreachable!(),
-            }
-        }
-        // Once we got to this point, we should have handled all invariants and can safely go to a
-        // new channel.
-        self.shared_state
+    pub fn set_filter_bssid_check(&self, enabled: bool) {
+        let _ = self
+            .shared_state
             .wifi
-            .set_channel(channel)
-            .map_err(|_| LMacError::InvalidChannel)?;
+            .set_filter_bssid_check(self.rx_filter_interface, enabled);
+    }
+    /// Begin an interface bringup operation.
+    ///
+    /// This allows implementing cancel safe connection bringup and is otherwise the same as
+    /// [LMacInterfaceControl::lock_channel].
+    /// ```ignore
+    /// let bringup_operation = interface_control.begin_interface_bringup_operation(6);
+    ///
+    /// /* Do connection setup */
+    ///
+    /// // If the future was dropped before this, the lock would be released.
+    /// bringup_operation.complete();
+    /// ```
+    pub fn begin_interface_bringup_operation<'a>(
+        &'a self,
+        channel: u8,
+    ) -> Result<InterfaceBringupOperation<'a, 'res>, LMacError> {
+        self.lock_channel(channel)?;
+        Ok(InterfaceBringupOperation {
+            lmac_interface_control: self,
+        })
+    }
+    /// Try to acquire channel lock for this interface and go to the specified channel.
+    pub fn lock_channel(&self, channel: u8) -> Result<(), LMacError> {
+        self.shared_state.channel_state.lock(|cs| {
+            cs.borrow_mut()
+                .lock_channel(self.rx_filter_interface, channel)
+        })?;
         Ok(())
     }
-    /// Unlock the channel state from this interface.
-    pub async fn unlock_channel(&self) {
-        // As with any other state changes, we first wait for off channel operations to complete.
-        self.wait_for_off_channel_completion().await;
-        let channel_state = self.shared_state.get_channel_state();
-        if channel_state == ChannelState::LockedByBothInterfaces {
-            // Set it to the inverse of our locked channel state.
-            self.shared_state
-                .set_channel_state(ChannelState::LockedByInterface(get_opposite_interface(
-                    self.rx_filter_interface,
-                )));
-        } else if channel_state == ChannelState::LockedByInterface(self.rx_filter_interface) {
-            self.shared_state.set_channel_state(ChannelState::NotLocked);
-        }
+    /// Release channel lock from this interface.
+    pub fn unlock_channel(&self) {
+        self.shared_state
+            .channel_state
+            .lock(|cs| cs.borrow_mut().unlock_channel(self.rx_filter_interface));
     }
     /// Begin an interface off channel operation.
     ///
     /// This will only request a grant for the operation from the other interface, not the
     /// requesting one.
-    pub async fn begin_interface_off_channel_operation<'a, 'res>(
+    pub async fn begin_interface_off_channel_operation<'a>(
         &'a self,
-        transmit_endpoint: &'a LMacTransmitEndpoint<'res>,
     ) -> Result<OffChannelOperation<'a, 'res>, LMacError> {
         // Before we start any operation, we need to wait for other pending ones to finish.
         self.wait_for_off_channel_completion().await;
-        let previous_channel_state = self.shared_state.get_channel_state();
-
-        if previous_channel_state != ChannelState::LockedByInterface(self.rx_filter_interface) {
-            match previous_channel_state {
-                ChannelState::NotLocked => {}
-                // Wait for the other interface to grant our request. We asserted in the if
-                // statement, that we don't have exclusive lock on the interface.
-                ChannelState::LockedByInterface(interface) => {
-                    self.shared_state
-                        .get_off_channel_requester_for_interface(interface)
-                        .request()
-                        .await?
+        // At this point we know that no off channel operation is active.
+        let channel_state = self.shared_state.get_channel_state().locks;
+        if let Some((locks, _)) = channel_state {
+            let mut i = 0;
+            // We request off channel operations from all interfaces, that currently have lock.
+            let results = join_array(locks.map(|locked| {
+                let interface = i;
+                i += 1;
+                async move {
+                    if locked {
+                        self.shared_state.off_channel_requesters[interface]
+                            .request()
+                            .await
+                    } else {
+                        Ok(())
+                    }
                 }
-                // We assume our interface automatically grants it's own request, so we again only
-                // ask the other interfaces.
-                ChannelState::LockedByBothInterfaces => {
-                    self.shared_state
-                        .get_off_channel_requester_for_interface(get_opposite_interface(
-                            self.rx_filter_interface,
-                        ))
-                        .request()
-                        .await?
-                }
-                ChannelState::OffChannelOperationInProgress => unreachable!(),
+            }))
+            .await;
+            // If any request fails, we bail out here.
+            for result in results {
+                result?;
             }
         }
-
-        self.shared_state
-            .set_channel_state(ChannelState::OffChannelOperationInProgress);
-
+        self.shared_state.channel_state.lock(|cs| {
+            cs.borrow_mut().off_channel_operation_interface = Some(self.rx_filter_interface)
+        });
         Ok(OffChannelOperation {
+            interface_control: self,
             rx_filter_interface: self.rx_filter_interface,
-            transmit_endpoint,
-            previous_channel_state,
-            previous_channel: self.shared_state.wifi.get_channel(),
+            previously_locked_channel: self
+                .shared_state
+                .get_channel_state()
+                .locks
+                .map(|(_, channel)| channel),
         })
     }
     /// Wait for any pending off channel operations to complete.
     pub async fn wait_for_off_channel_completion(&self) {
-        if self.shared_state.get_channel_state() != ChannelState::OffChannelOperationInProgress {
+        if !self
+            .shared_state
+            .get_channel_state()
+            .is_off_channel_operation_in_progress()
+        {
             return;
         }
-        self.off_channel_completion_receiver
-            .lock()
-            .await
+        self.shared_state
+            .off_channel_completion_signal
+            .receiver()
+            .unwrap()
             .changed()
             .await;
     }
     /// Wait for an off channel operations request to arrive, which can then be granted.
     pub async fn wait_for_off_channel_request(&self) -> OffChannelRequest<'_> {
-        self.shared_state
-            .get_off_channel_requester_for_interface(self.rx_filter_interface)
+        self.shared_state.off_channel_requesters[self.rx_filter_interface]
             .wait_for_request()
             .await
     }
-    /// Returns the default [TxParameters] for this interface.
+    /// Returns the id of the filter interface.
+    pub fn get_filter_interface(&self) -> usize {
+        self.rx_filter_interface
+    }
+    /// Get the factory MAC address for this interface.
     ///
-    /// This sets the interface parameters and enables `wait_for_ack`.
-    pub fn get_default_tx_parameters(&self) -> TxParameters {
-        TxParameters {
-            rate: WiFiRate::PhyRate1ML,
-            duration: 0,
-            interface_zero: self.rx_filter_interface == RxFilterInterface::Zero,
-            interface_one: self.rx_filter_interface == RxFilterInterface::One,
-            wait_for_ack: true,
-            override_seq_num: true,
-            tx_error_behaviour: TxErrorBehaviour::RetryUntil(4),
-        }
+    /// NOTE: This reads the base MAC address from the efuses and adds the interface index to the
+    /// last octet.
+    pub fn get_factory_mac_for_interface(&self) -> [u8; 6] {
+        let mut base_mac = Efuse::read_base_mac_address();
+        base_mac[5] += self.rx_filter_interface as u8;
+        base_mac
     }
 }

@@ -3,8 +3,8 @@ use core::marker::PhantomData;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
 use foa::{
-    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxParameters},
-    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
+    esp_wifi_hal::{BorrowedBuffer, RxFilterBank, TxParameters},
+    lmac::LMacInterfaceControl,
 };
 use ieee80211::{
     common::{
@@ -21,7 +21,7 @@ use ieee80211::{
     },
     scroll::{Pread, Pwrite},
 };
-use log::debug;
+use log::{debug, info};
 
 use crate::{
     control::BSS,
@@ -33,12 +33,11 @@ use crate::{
 /// Connecting to an AP.
 pub struct ConnectionOperation<'a, 'res> {
     pub(crate) rx_router: &'a RxRouter,
-    pub(crate) rx_queue: &'a Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
+    pub(crate) rx_queue: &'a Channel<NoopRawMutex, BorrowedBuffer<'res>, 4>,
     pub(crate) router_queue: RxQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
-    pub(crate) transmit_endpoint: &'a LMacTransmitEndpoint<'res>,
 }
-impl<'a, 'res> ConnectionOperation<'a, 'res> {
+impl ConnectionOperation<'_, '_> {
     /// Authenticate with the BSS.
     async fn do_auth(
         &self,
@@ -46,7 +45,7 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         timeout: Duration,
         mac_address: MACAddress,
     ) -> Result<(), StaError> {
-        let mut tx_buffer = self.transmit_endpoint.alloc_tx_buf().await;
+        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
                 AuthenticationFrame {
@@ -71,20 +70,21 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
             )
             .unwrap();
         let _ = self
-            .transmit_endpoint
+            .interface_control
             .transmit(
                 &mut tx_buffer[..written],
                 &TxParameters {
                     rate: DEFAULT_PHY_RATE,
-                    ..self.interface_control.get_default_tx_parameters()
+                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
+                true,
             )
             .await;
         // Due to the user operation being set to authenticating, we'll only receive authentication
         // frames.
         let Ok(response) = with_timeout(timeout, self.rx_queue.receive()).await else {
             debug!("Authentication timed out.");
-            return Err(StaError::Timeout);
+            return Err(StaError::AuthenticationTimeout);
         };
         let Ok(auth_frame) = response.mpdu_buffer().pread::<AuthenticationFrame>(0) else {
             debug!(
@@ -111,7 +111,7 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         timeout: Duration,
         mac_address: MACAddress,
     ) -> Result<AssociationID, StaError> {
-        let mut tx_buffer = self.transmit_endpoint.alloc_tx_buf().await;
+        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
                 AssociationRequestFrame {
@@ -139,35 +139,45 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
             .unwrap();
 
         let _ = self
-            .transmit_endpoint
+            .interface_control
             .transmit(
                 &mut tx_buffer[..written],
                 &TxParameters {
                     rate: DEFAULT_PHY_RATE,
-                    ..self.interface_control.get_default_tx_parameters()
+                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
+                true,
             )
             .await;
         let Ok(received) = with_timeout(timeout, self.rx_queue.receive()).await else {
             debug!("Association timed out.");
-            return Err(StaError::Timeout);
+            return Err(StaError::AssociationTimeout);
         };
-        let assoc_response = received
-            .mpdu_buffer()
-            .pread::<AssociationResponseFrame>(0)
-            .unwrap();
-        if assoc_response.status_code == IEEE80211StatusCode::Success {
+        info!(
+            "{:x}",
+            u16::from_le_bytes(received.mpdu_buffer()[28..30].try_into().unwrap())
+        );
+        let Ok(assoc_response) = received.mpdu_buffer().pread::<AssociationResponseFrame>(0) else {
             debug!(
-                "Successfuly associated with {}, AID: {:?}.",
-                bss.bssid, assoc_response.association_id
+                "Failed to associate with {}, frame deserialization failed.",
+                bss.bssid
             );
-            Ok(assoc_response.association_id)
-        } else {
+            return Err(StaError::FrameDeserializationFailed);
+        };
+        if assoc_response.status_code != IEEE80211StatusCode::Success
+            || assoc_response.association_id.is_none()
+        {
             debug!(
                 "Failed to associate with {}, status: {:?}.",
                 bss.bssid, assoc_response.status_code
             );
             Err(StaError::AssociationFailure(assoc_response.status_code))
+        } else {
+            debug!(
+                "Successfuly associated with {}, AID: {:?}.",
+                bss.bssid, assoc_response.association_id
+            );
+            Ok(assoc_response.association_id.unwrap())
         }
     }
     pub async fn run(
@@ -176,9 +186,9 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
         timeout: Duration,
         mac_address: MACAddress,
     ) -> Result<AssociationID, StaError> {
-        self.interface_control
-            .set_and_lock_channel(bss.channel)
-            .await
+        let bringup_operation = self
+            .interface_control
+            .begin_interface_bringup_operation(bss.channel)
             .map_err(StaError::LMacError)?;
         self.rx_router
             .begin_operation(self.router_queue, Operation::Connecting)
@@ -196,9 +206,12 @@ impl<'a, 'res> ConnectionOperation<'a, 'res> {
             .set_filter_parameters(RxFilterBank::BSSID, *bss.bssid, None);
         self.interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
+        self.interface_control.set_filter_bssid_check(false);
 
         self.do_auth(bss, timeout, mac_address).await?;
         let aid = self.do_assoc(bss, timeout, mac_address).await?;
+
+        bringup_operation.complete();
 
         Ok(aid)
     }

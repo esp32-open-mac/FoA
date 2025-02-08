@@ -1,46 +1,54 @@
 use core::marker::PhantomData;
 
-use embassy_futures::select::{select, select4, Either4};
+use embassy_futures::{
+    join::join,
+    select::{select, select4, Either4},
+};
 use embassy_net::driver::{HardwareAddress, LinkState};
-use embassy_net_driver_channel::{StateRunner, TxRunner};
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
+use embassy_net_driver_channel::{RxRunner, StateRunner, TxRunner};
+use embassy_sync::{
+    blocking_mutex::raw::NoopRawMutex,
+    channel::{Channel, DynamicSender},
+};
 use embassy_time::{Duration, Ticker};
-use ethernet::Ethernet2Frame;
+use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
-    esp32_wifi_hal_rs::{BorrowedBuffer, RxFilterBank, TxParameters},
-    interface::InterfaceRunner,
-    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
+    esp_wifi_hal::{BorrowedBuffer, RxFilterBank, TxParameters},
+    lmac::LMacInterfaceControl,
+    ReceivedFrame, RxQueueReceiver,
 };
 use ieee80211::{
-    common::{DataFrameSubtype, FCFFlags, SequenceControl},
-    data_frame::{header::DataFrameHeader, DataFrame},
+    common::{DataFrameSubtype, FCFFlags, FrameType, SequenceControl},
+    data_frame::{header::DataFrameHeader, DataFrame, DataFrameReadPayload},
     match_frames,
     mgmt_frame::{BeaconFrame, DeauthenticationFrame},
     scroll::{Pread, Pwrite},
+    GenericFrame,
 };
-use llc::SnapLlcFrame;
+use llc_rs::SnapLlcFrame;
 use log::debug;
 
-use crate::{ConnectionState, ConnectionStateTracker, DEFAULT_PHY_RATE, MTU};
+use crate::{
+    rx_router::{RxQueue, RxRouter},
+    ConnectionState, ConnectionStateTracker, DEFAULT_PHY_RATE, MTU,
+};
 
-/// Interface runner for the [StaInterface](crate::StaInterface).
-pub struct StaRunner<'res> {
+pub(crate) struct ConnectionRunner<'vif, 'foa> {
     // Low level RX/TX.
-    pub(crate) rx_queue: &'res Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
-    pub(crate) transmit_endpoint: LMacTransmitEndpoint<'res>,
-    pub(crate) interface_control: &'res LMacInterfaceControl<'res>,
+    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
 
     // Upper layer control.
-    pub(crate) tx_runner: TxRunner<'res, MTU>,
-    pub(crate) state_runner: StateRunner<'res>,
+    pub(crate) tx_runner: TxRunner<'vif, MTU>,
+    pub(crate) state_runner: StateRunner<'vif>,
 
     // Connection management.
-    pub(crate) connection_state: &'res ConnectionStateTracker,
+    pub(crate) connection_state: &'vif ConnectionStateTracker,
 }
-impl StaRunner<'_> {
+impl ConnectionRunner<'_, '_> {
     /// Set the internal state to disconnected.
     async fn set_disconnected(&self) {
-        self.interface_control.unlock_channel().await;
+        self.interface_control.unlock_channel();
         self.connection_state
             .signal_state(ConnectionState::Disconnected)
             .await;
@@ -49,7 +57,6 @@ impl StaRunner<'_> {
     async fn handle_data_tx(
         buffer: &[u8],
         interface_control: &LMacInterfaceControl<'_>,
-        transmit_endpoint: &LMacTransmitEndpoint<'_>,
         connection_state: &ConnectionStateTracker,
     ) {
         let Some(connection_info) = connection_state.connection_info().await else {
@@ -58,7 +65,7 @@ impl StaRunner<'_> {
         let Ok(ethernet_frame) = buffer.pread::<Ethernet2Frame>(0) else {
             return;
         };
-        let mut tx_buf = transmit_endpoint.alloc_tx_buf().await;
+        let mut tx_buf = interface_control.alloc_tx_buf().await;
         let data_frame = DataFrame {
             header: DataFrameHeader {
                 subtype: DataFrameSubtype::Data,
@@ -80,13 +87,14 @@ impl StaRunner<'_> {
         let Ok(written) = tx_buf.pwrite(data_frame, 0) else {
             return;
         };
-        let _ = transmit_endpoint
+        let _ = interface_control
             .transmit(
                 &mut tx_buf[..written],
                 &TxParameters {
                     rate: DEFAULT_PHY_RATE,
-                    ..interface_control.get_default_tx_parameters()
+                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
+                true,
             )
             .await;
         debug!(
@@ -106,7 +114,7 @@ impl StaRunner<'_> {
         self.set_disconnected().await;
     }
     /// Handle a frame arriving on the background queue, during a connection.
-    async fn handle_bg_rx(&mut self, buffer: BorrowedBuffer<'_, '_>, beacon_timeout: &mut Ticker) {
+    async fn handle_bg_rx(&mut self, buffer: BorrowedBuffer<'_>, beacon_timeout: &mut Ticker) {
         let _ = match_frames! {
             buffer.mpdu_buffer(),
             deauth = DeauthenticationFrame => {
@@ -128,7 +136,7 @@ impl StaRunner<'_> {
             // 3. A frame arriving for TX.
             match select4(
                 self.interface_control.wait_for_off_channel_request(),
-                self.rx_queue.receive(),
+                self.bg_rx_queue.receive(),
                 self.tx_runner.tx_buf(),
                 beacon_timeout.next(),
             )
@@ -142,30 +150,20 @@ impl StaRunner<'_> {
                 }
                 Either4::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout).await,
                 Either4::Third(data) => {
-                    Self::handle_data_tx(
-                        data,
-                        self.interface_control,
-                        &self.transmit_endpoint,
-                        self.connection_state,
-                    )
-                    .await;
+                    Self::handle_data_tx(data, self.interface_control, self.connection_state).await;
                     self.tx_runner.tx_done();
                 }
                 Either4::Fourth(_) => {
                     self.connection_state
                         .signal_state(ConnectionState::Disconnected)
                         .await;
-                    self.interface_control.unlock_channel().await;
+                    self.interface_control.unlock_channel();
                     debug!("Disconnected from BSS due to beacon timeout.");
                 }
             }
         }
     }
-}
-impl InterfaceRunner for StaRunner<'_> {
-    /// Run the station interface.
     async fn run(&mut self) -> ! {
-        debug!("STA runner active.");
         loop {
             let connection_info = self.connection_state.wait_for_connection().await;
             self.state_runner
@@ -185,9 +183,98 @@ impl InterfaceRunner for StaRunner<'_> {
             // We reset all connection specific parameters here.
             self.interface_control
                 .set_filter_status(RxFilterBank::BSSID, false);
-            self.interface_control.unlock_channel().await;
+            self.interface_control.unlock_channel();
             self.state_runner.set_link_state(LinkState::Down);
             debug!("Link went down.");
         }
+    }
+}
+pub(crate) struct RoutingRunner<'vif, 'foa> {
+    // Low level RX/TX.
+    pub(crate) bg_queue_sender: DynamicSender<'vif, ReceivedFrame<'foa>>,
+    pub(crate) interface_rx_queue: &'vif RxQueueReceiver<'foa>,
+    pub(crate) user_queue_sender: DynamicSender<'vif, BorrowedBuffer<'foa>>,
+
+    // Upper layer control.
+    pub(crate) rx_runner: RxRunner<'vif, MTU>,
+    // Connection management.
+    pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) rx_router: &'vif RxRouter,
+}
+impl RoutingRunner<'_, '_> {
+    /// Forward a received data frame to higher layers.
+    async fn handle_data_rx(
+        rx_runner: &mut RxRunner<'_, MTU>,
+        data_frame: DataFrame<'_, DataFrameReadPayload<'_>>,
+        connection_state: &ConnectionStateTracker,
+    ) {
+        let Some(_connection_info) = connection_state.connection_info().await else {
+            return;
+        };
+        let Some(destination_address) = data_frame.header.destination_address() else {
+            return;
+        };
+        let Some(source_address) = data_frame.header.source_address() else {
+            return;
+        };
+        let Some(DataFrameReadPayload::Single(payload)) = data_frame.payload else {
+            return;
+        };
+        let Ok(llc_payload) = payload.pread::<SnapLlcFrame>(0) else {
+            return;
+        };
+        let Some(rx_buf) = rx_runner.try_rx_buf() else {
+            debug!("Dropping MSDU, because no buffers are available.");
+            return;
+        };
+        let Ok(written) = rx_buf.pwrite(
+            Ethernet2Frame {
+                header: Ethernet2Header {
+                    dst: *destination_address,
+                    src: *source_address,
+                    ether_type: llc_payload.ether_type,
+                },
+                payload: llc_payload.payload,
+            },
+            0,
+        ) else {
+            return;
+        };
+        rx_runner.rx_done(written);
+        debug!("Received {written} bytes from {}", source_address);
+    }
+    async fn run(&mut self) -> ! {
+        loop {
+            let borrowed_buffer = self.interface_rx_queue.receive().await;
+            // We create a generic_frame, to do matching.
+            let Ok(generic_frame) = GenericFrame::new(borrowed_buffer.mpdu_buffer(), false) else {
+                continue;
+            };
+            if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type() {
+                let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
+                    continue;
+                };
+                Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state).await;
+            } else {
+                let _ = match self.rx_router.target_queue_for_frame(&generic_frame) {
+                    RxQueue::User => &self.user_queue_sender,
+                    RxQueue::Background => &self.bg_queue_sender,
+                }
+                .try_send(borrowed_buffer);
+            }
+        }
+    }
+}
+/// Interface runner for the [StaInterface](crate::StaInterface).
+pub struct StaRunner<'vif, 'foa> {
+    pub(crate) connection_runner: ConnectionRunner<'vif, 'foa>,
+    pub(crate) routing_runner: RoutingRunner<'vif, 'foa>,
+}
+impl StaRunner<'_, '_> {
+    /// Run the station interface.
+    pub async fn run(&mut self) -> ! {
+        debug!("STA runner active.");
+        join(self.connection_runner.run(), self.routing_runner.run()).await;
+        unreachable!()
     }
 }

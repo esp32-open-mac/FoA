@@ -7,13 +7,22 @@ edition = "2021"
 embassy-sync = "0.6.0"
 embassy-futures = "0.1.1"
 
-esp-hal = { git = "https://github.com/esp-rs/esp-hal", package = "esp-hal", features = ["esp32"] }
-esp32-wifi-hal-rs = { git = "https://github.com/esp32-open-mac/esp32-wifi-hal-rs", features = ["log"] }
-
+esp-hal = "0.23.1"
+esp-wifi-hal = { git = "https://github.com/esp32-open-mac/esp-wifi-hal.git" }
 log = "0.4.22"
 static_cell = "2.1.0"
 critical-section = "1.2.0"
+portable-atomic = "1.10.0"
+esp-config= "0.3.0"
+
+[build-dependencies]
+esp-config = { version = "0.3.0", features = ["build"] }
 
 [features]
+default = ["esp32"]
 clear_tx_buffers = []
+driver_logs = ["esp-wifi-hal/log"]
+
+esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]
+esp32s2 = ["esp-hal/esp32s2", "esp-wifi-hal/esp32s2"]
 

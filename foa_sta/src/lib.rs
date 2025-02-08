@@ -42,16 +42,15 @@ use ieee80211::{
 
 use embassy_net_driver_channel::{self as ch};
 use foa::{
-    esp32_wifi_hal_rs::{BorrowedBuffer, WiFiRate},
-    interface::Interface,
-    lmac::{LMacError, LMacInterfaceControl, LMacTransmitEndpoint},
+    esp_wifi_hal::{BorrowedBuffer, WiFiRate},
+    lmac::LMacError,
+    VirtualInterface,
 };
 
 pub mod control;
 mod runner;
 pub use runner::StaRunner;
-mod input;
-pub use input::StaInput;
+use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
 pub use operations::scan::ScanConfig;
 use rx_router::RxRouter;
@@ -64,8 +63,8 @@ pub enum StaError {
     LMacError(LMacError),
     /// The scan was unable to find the specified ESS.
     UnableToFindEss,
-    /// An operation didn't complete in time.
-    Timeout,
+    AuthenticationTimeout,
+    AssociationTimeout,
     /// Deserializing a received frame failed.
     FrameDeserializationFailed,
     /// Authentication failed with the specified status code.
@@ -147,22 +146,19 @@ impl ConnectionStateTracker {
 }
 
 /// Shared resources for the [StaInterface].
-pub struct StaSharedResources<'res> {
+pub struct StaResources<'foa> {
     // RX routing.
     rx_router: RxRouter,
-    bg_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
-    user_queue: Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
+    bg_queue: Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    user_queue: Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
 
     // Networking.
     channel_state: ch::State<MTU, 4, 4>,
 
     // State tracking.
     connection_state: ConnectionStateTracker,
-
-    // Misc.
-    interface_control: Option<LMacInterfaceControl<'res>>,
 }
-impl Default for StaSharedResources<'_> {
+impl Default for StaResources<'_> {
     fn default() -> Self {
         Self {
             rx_router: RxRouter::new(),
@@ -170,74 +166,54 @@ impl Default for StaSharedResources<'_> {
             user_queue: Channel::new(),
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
-            interface_control: None,
         }
     }
 }
 
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
-/// A dummy type for a station interface.
-///
-/// This is intended to be used, with
-/// [foa::new_with_single_interface].
-pub struct StaInterface;
-impl Interface for StaInterface {
-    const NAME: &str = "STA";
-    type SharedResourcesType<'res> = StaSharedResources<'res>;
-    type ControlType<'res> = (StaControl<'res>, StaNetDevice<'res>);
-    type RunnerType<'res> = StaRunner<'res>;
-    type InputType<'res> = StaInput<'res>;
-    type InitInfo = ();
-    async fn new<'res>(
-        sta_shared_state: &'res mut Self::SharedResourcesType<'res>,
-        _init_info: Self::InitInfo,
-        transmit_endpoint: LMacTransmitEndpoint<'res>,
-        interface_control: LMacInterfaceControl<'res>,
-        mac_address: [u8; 6],
-    ) -> (
-        Self::ControlType<'res>,
-        Self::RunnerType<'res>,
-        Self::InputType<'res>,
-    ) {
-        // Create a reference to the interface control, with the 'res lifetime.
-        sta_shared_state.interface_control = Some(interface_control);
-        let interface_control = sta_shared_state.interface_control.as_ref().unwrap();
-
-        // Initialize embassy_net.
-        let (net_runner, net_device) = ch::new(
-            &mut sta_shared_state.channel_state,
-            HardwareAddress::Ethernet(mac_address),
-        );
-        let (state_runner, rx_runner, tx_runner) = net_runner.split();
-
-        (
-            (
-                StaControl {
-                    transmit_endpoint,
-                    interface_control,
-                    mac_address: MACAddress::new(mac_address),
-                    rx_router: &sta_shared_state.rx_router,
-                    rx_queue: &sta_shared_state.user_queue,
-                    connection_state: &sta_shared_state.connection_state,
-                },
-                net_device,
-            ),
-            StaRunner {
-                rx_queue: &sta_shared_state.bg_queue,
-                transmit_endpoint,
+pub fn new_sta_interface<'vif, 'foa>(
+    virtual_interface: &'vif mut VirtualInterface<'foa>,
+    resources: &'vif mut StaResources<'foa>,
+    mac_address: Option<[u8; 6]>,
+) -> (
+    StaControl<'vif, 'foa>,
+    StaRunner<'vif, 'foa>,
+    StaNetDevice<'vif>,
+) {
+    let (interface_control, interface_rx_queue) = virtual_interface.split();
+    let mac_address = mac_address.unwrap_or(interface_control.get_factory_mac_for_interface());
+    // Initialize embassy_net.
+    let (net_runner, net_device) = ch::new(
+        &mut resources.channel_state,
+        HardwareAddress::Ethernet(mac_address),
+    );
+    let (state_runner, rx_runner, tx_runner) = net_runner.split();
+    (
+        StaControl {
+            interface_control,
+            mac_address: MACAddress::new(mac_address),
+            connection_state: &resources.connection_state,
+            rx_queue: &resources.user_queue,
+            rx_router: &resources.rx_router,
+        },
+        StaRunner {
+            connection_runner: ConnectionRunner {
+                bg_rx_queue: &resources.bg_queue,
                 interface_control,
                 tx_runner,
                 state_runner,
-                connection_state: &sta_shared_state.connection_state,
+                connection_state: &resources.connection_state,
             },
-            StaInput {
+            routing_runner: RoutingRunner {
+                connection_state: &resources.connection_state,
+                bg_queue_sender: resources.bg_queue.dyn_sender(),
+                interface_rx_queue,
+                rx_router: &resources.rx_router,
                 rx_runner,
-                rx_router: &sta_shared_state.rx_router,
-                bg_queue_sender: sta_shared_state.bg_queue.dyn_sender(),
-                user_queue_sender: sta_shared_state.user_queue.dyn_sender(),
-                connection_state: &sta_shared_state.connection_state,
+                user_queue_sender: resources.user_queue.dyn_sender(),
             },
-        )
-    }
+        },
+        net_device,
+    )
 }

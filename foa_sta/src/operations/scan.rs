@@ -1,9 +1,6 @@
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
-use foa::{
-    esp32_wifi_hal_rs::BorrowedBuffer,
-    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
-};
+use foa::{esp_wifi_hal::BorrowedBuffer, esp_wifi_hal::ScanningMode, lmac::LMacInterfaceControl};
 use log::debug;
 
 use crate::{
@@ -41,12 +38,11 @@ impl Default for ScanConfig<'_> {
 /// this, which will restore everything to it's original state.
 pub(crate) struct ScanOperation<'a, 'res> {
     pub(crate) rx_router: &'a RxRouter,
-    pub(crate) rx_queue: &'a Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
+    pub(crate) rx_queue: &'a Channel<NoopRawMutex, BorrowedBuffer<'res>, 4>,
     pub(crate) router_queue: RxQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
-    pub(crate) transmit_endpoint: &'a LMacTransmitEndpoint<'res>,
 }
-impl<'a, 'res> ScanOperation<'a, 'res> {
+impl ScanOperation<'_, '_> {
     /// Scan for ESS's, with the specified [ScanConfig].
     ///
     /// If a beacon frame is received, the [BorrowedBuffer] is passed to `beacon_rx_cb`. If that
@@ -55,12 +51,12 @@ impl<'a, 'res> ScanOperation<'a, 'res> {
     pub async fn run(
         self,
         scan_config: Option<ScanConfig<'_>>,
-        mut beacon_rx_cb: impl FnMut(BorrowedBuffer<'_, '_>) -> bool,
+        mut beacon_rx_cb: impl FnMut(BorrowedBuffer<'_>) -> bool,
     ) -> Result<(), StaError> {
         // We begin the off channe operation.
         let mut off_channel_operation = self
             .interface_control
-            .begin_interface_off_channel_operation(self.transmit_endpoint)
+            .begin_interface_off_channel_operation()
             .await
             .map_err(StaError::LMacError)?;
 
@@ -74,7 +70,7 @@ impl<'a, 'res> ScanOperation<'a, 'res> {
         self.rx_router
             .begin_operation(self.router_queue, Operation::Scanning)
             .await;
-        off_channel_operation.set_scanning_mode(true);
+        off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
         self.rx_queue.clear();
 
         // Loop through channels.

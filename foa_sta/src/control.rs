@@ -10,10 +10,7 @@ use ieee80211::{
 };
 use log::debug;
 
-use foa::{
-    esp32_wifi_hal_rs::BorrowedBuffer,
-    lmac::{LMacInterfaceControl, LMacTransmitEndpoint},
-};
+use foa::{esp_wifi_hal::BorrowedBuffer, lmac::LMacInterfaceControl};
 
 use crate::{
     operations::{
@@ -37,20 +34,19 @@ pub struct BSS {
 }
 
 /// This provides control over the STA interface.
-pub struct StaControl<'res> {
+pub struct StaControl<'vif, 'foa> {
     // Low level RX/TX.
-    pub(crate) rx_router: &'res RxRouter,
-    pub(crate) rx_queue: &'res Channel<NoopRawMutex, BorrowedBuffer<'res, 'res>, 4>,
-    pub(crate) transmit_endpoint: LMacTransmitEndpoint<'res>,
-    pub(crate) interface_control: &'res LMacInterfaceControl<'res>,
+    pub(crate) rx_router: &'vif RxRouter,
+    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
 
     // Misc.
     pub(crate) mac_address: MACAddress,
 
     // Connection management.
-    pub(crate) connection_state: &'res ConnectionStateTracker,
+    pub(crate) connection_state: &'vif ConnectionStateTracker,
 }
-impl<'res> StaControl<'res> {
+impl StaControl<'_, '_> {
     /// Set the MAC address for the STA interface.
     pub async fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
         if self.connection_state.connection_info().await.is_some() {
@@ -75,7 +71,6 @@ impl<'res> StaControl<'res> {
             rx_queue: self.rx_queue,
             router_queue: RxQueue::User,
             interface_control: self.interface_control,
-            transmit_endpoint: &self.transmit_endpoint,
         }
         .run(scan_config, |received| {
             let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
@@ -126,7 +121,6 @@ impl<'res> StaControl<'res> {
             rx_queue: self.rx_queue,
             router_queue: RxQueue::User,
             interface_control: self.interface_control,
-            transmit_endpoint: &self.transmit_endpoint,
         }
         .run(scan_config, |received| {
             let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
@@ -172,7 +166,6 @@ impl<'res> StaControl<'res> {
             rx_queue: self.rx_queue,
             router_queue: RxQueue::User,
             interface_control: self.interface_control,
-            transmit_endpoint: &self.transmit_endpoint,
         }
         .run(bss, timeout.unwrap_or(DEFAULT_TIMEOUT), self.mac_address)
         .await?;
@@ -191,12 +184,7 @@ impl<'res> StaControl<'res> {
         let Some(connection_info) = self.connection_state.connection_info().await else {
             return Err(StaError::NotConnected);
         };
-        send_deauth(
-            &self.transmit_endpoint,
-            self.interface_control,
-            &connection_info,
-        )
-        .await;
+        send_deauth(self.interface_control, &connection_info).await;
         self.connection_state
             .signal_state(ConnectionState::Disconnected)
             .await;

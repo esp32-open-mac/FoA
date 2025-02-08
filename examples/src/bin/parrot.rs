@@ -15,13 +15,13 @@ use esp_hal::{
     timer::timg::TimerGroup,
     uart::{self, Uart},
 };
-use foa::{bg_task::SingleInterfaceRunner, FoAStackResources};
-use foa_sta::{StaInterface, StaNetDevice, StaSharedResources};
+use foa::{bg_task::FoARunner, FoAResources, VirtualInterface};
+use foa_sta::{StaNetDevice, StaResources, StaRunner};
 use log::info;
 use rand_core::RngCore;
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
-const SSID: &str = "OpenWrt";
+const SSID: &str = "Freifunk";
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -33,8 +33,12 @@ macro_rules! mk_static {
 }
 
 #[embassy_executor::task]
-async fn wifi_task(mut wifi_runner: SingleInterfaceRunner<'static, StaInterface>) -> ! {
-    wifi_runner.run().await
+async fn foa_task(mut foa_runner: FoARunner<'static>) -> ! {
+    foa_runner.run().await
+}
+#[embassy_executor::task]
+async fn sta_task(mut sta_runner: StaRunner<'static, 'static>) -> ! {
+    sta_runner.run().await
 }
 #[embassy_executor::task]
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
@@ -48,19 +52,22 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
 
-    let stack_resources = mk_static!(
-        FoAStackResources<StaSharedResources>,
-        FoAStackResources::new()
-    );
-    let ((mut sta_control, net_device), runner) = foa::new_with_single_interface::<StaInterface>(
+    let stack_resources = mk_static!(FoAResources, FoAResources::new());
+    let ([sta_vif, ..], foa_runner) = foa::init(
         stack_resources,
         peripherals.WIFI,
         peripherals.RADIO_CLK,
         peripherals.ADC2,
-        (),
-    )
-    .await;
-    spawner.spawn(wifi_task(runner)).unwrap();
+    );
+    spawner.spawn(foa_task(foa_runner)).unwrap();
+
+    let sta_resources = mk_static!(StaResources<'static>, StaResources::default());
+    let (mut sta_control, sta_runner, net_device) = foa_sta::new_sta_interface(
+        mk_static!(VirtualInterface<'static>, sta_vif),
+        sta_resources,
+        None,
+    );
+    spawner.spawn(sta_task(sta_runner)).unwrap();
 
     let mut mac_address = [0u8; 6];
     Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
@@ -105,13 +112,18 @@ async fn main(spawner: Spawner) {
         panic!()
     };
     let parrot_buffer = mk_static!([u8; 1119], [0u8; 1119]);
+    #[cfg(feature = "esp32")]
+    let (rx_pin, tx_pin) = (peripherals.GPIO3, peripherals.GPIO1);
+    #[cfg(feature = "esp32s2")]
+    let (rx_pin, tx_pin) = (peripherals.GPIO44, peripherals.GPIO43);
+
     let (_uart0_rx, mut uart0_tx) = Uart::new(
         peripherals.UART0,
         uart::Config::default().with_rx_fifo_full_threshold(64),
-        peripherals.GPIO3,
-        peripherals.GPIO1,
     )
     .unwrap()
+    .with_rx(rx_pin)
+    .with_tx(tx_pin)
     .into_async()
     .split();
     loop {

@@ -1,10 +1,7 @@
 //! This module implements buffer management for TX.
 //!
-//! You can use [LMacTransmitEndpoint::alloc_tx_buf](crate::lmac::LMacTransmitEndpoint::alloc_tx_buf) to wait for a TX buffer to become available.
-use core::{
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
+//! You can use [LMacTransmitEndpoint::alloc_tx_buf](crate::lmac::LMacInterfaceControl::alloc_tx_buf) to wait for a TX buffer to become available.
+use core::ops::{Deref, DerefMut};
 
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
@@ -74,28 +71,27 @@ impl<'res> DynTxBufferManager<'res> {
 }
 
 /// A struct managing the allocation of [TxBuffer]s from a pre-allocated slab of memory.
-pub(crate) struct TxBufferManager<'res, const TX_BUFFER_SIZE: usize, const TX_BUFFER_COUNT: usize> {
+pub(crate) struct TxBufferManager<const TX_BUFFER_COUNT: usize> {
     buffer_queue: channel::Channel<NoopRawMutex, *mut [u8], TX_BUFFER_COUNT>,
-    _phantom: PhantomData<&'res ()>,
 }
-impl<'res, const TX_BUFFER_SIZE: usize, const TX_BUFFER_COUNT: usize>
-    TxBufferManager<'res, TX_BUFFER_SIZE, TX_BUFFER_COUNT>
-{
+impl<const TX_BUFFER_COUNT: usize> TxBufferManager<TX_BUFFER_COUNT> {
     /// Create a new [TxBufferManager], with the provided buffers.
-    pub fn new(buffers: &'res mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT]) -> Self {
+    ///
+    /// SAFETY:
+    /// You must ensure, that the buffers outlive the TX buffer manager.
+    pub unsafe fn new<const TX_BUFFER_SIZE: usize>(
+        buffers: &mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
+    ) -> Self {
         let buffer_queue = Channel::new();
 
-        for buffer in buffers.iter_mut() {
+        for buffer in buffers {
             let _ = buffer_queue.try_send(buffer.as_mut_slice() as *mut _);
         }
 
-        Self {
-            buffer_queue,
-            _phantom: PhantomData,
-        }
+        Self { buffer_queue }
     }
     /// Acquire a [DynTxBufferManager].
-    pub fn dyn_tx_buffer_manager(&'res self) -> DynTxBufferManager<'res> {
+    pub fn dyn_tx_buffer_manager(&self) -> DynTxBufferManager<'_> {
         DynTxBufferManager {
             buffer_sender: self.buffer_queue.dyn_sender(),
             buffer_receiver: self.buffer_queue.dyn_receiver(),
