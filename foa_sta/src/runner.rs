@@ -153,7 +153,7 @@ impl ConnectionRunner<'_, '_> {
                 }
                 Either4::Fourth(_) => {
                     send_deauth(
-                        &self.interface_control,
+                        self.interface_control,
                         &self.connection_state.connection_info().unwrap(),
                     )
                     .await;
@@ -294,7 +294,7 @@ impl RoutingRunner<'_, '_> {
         }
     }
 }
-/// Interface runner for the [StaInterface](crate::StaInterface).
+/// Interface runner for the STA interface.
 pub struct StaRunner<'vif, 'foa> {
     pub(crate) connection_runner: ConnectionRunner<'vif, 'foa>,
     pub(crate) routing_runner: RoutingRunner<'vif, 'foa>,

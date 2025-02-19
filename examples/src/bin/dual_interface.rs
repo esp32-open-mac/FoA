@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use defmt::{debug, error, info};
+use defmt_or_log::{error, info};
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join_array;
@@ -46,7 +46,6 @@ async fn run_net_stack(spawner: &Spawner, net_device: StaNetDevice<'static>) {
         Box::leak(net_stack_resources),
         1234,
     );
-    debug!("Starting net stack.");
     spawner.spawn(net_task(net_runner)).unwrap();
     info!("waiting for DHCP...");
     net_stack.wait_config_up().await;
@@ -89,6 +88,9 @@ async fn run_net_stack(spawner: &Spawner, net_device: StaNetDevice<'static>) {
 async fn main(spawner: Spawner) {
     let peripherals =
         esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz));
+
+    #[cfg(feature = "log")]
+    esp_println::logger::init_logger_from_env();
 
     heap_allocator!(size: 100 * 1024);
     error!("Initialized FoA with two interfaces.");

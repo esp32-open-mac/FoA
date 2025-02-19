@@ -1,8 +1,7 @@
 #![no_std]
 #![no_main]
 
-use defmt::info;
-
+use defmt_or_log::info;
 use embassy_executor::Spawner;
 use embassy_futures::join::join3;
 
@@ -25,6 +24,9 @@ macro_rules! mk_static {
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+
+    #[cfg(feature = "log")]
+    esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);

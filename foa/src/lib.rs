@@ -6,7 +6,7 @@
 //! This project is neither maintained by nor in anyway affiliated with Espressif. You're using
 //! this at your own risk!
 //! ## Structure
-//! The [foa] crate is the central element of the stack. It doesn't implement any specific
+//! The `foa` crate is the central element of the stack. It doesn't implement any specific
 //! operating modes, but implements the APIs to do so. When calling [init], you get a
 //! [FoARunner] and a set of [VirtualInterfaces](VirtualInterface), which can then be passed on to
 //! interface implementations.
@@ -15,14 +15,13 @@
 //!
 //! Operating Mode | Implementation | Description | Maintainer
 //! -- | -- | -- | --
-//! STA | [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta) | A simple client Implementation. | `Frostie314159`
+//! STA | [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta) | A simple client implementation. | `Frostie314159`
+//! Nintendo DS Pictochat | [foa_dswifi](https://github.com/mjwells2002/foa_dswifi) | An implementation of the Nintendo DS Pictochat protocol. | `mjwells2002`
 //!
 //!
 //! ### Station (STA)
 //! A simple STA mode interface is implemented in [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta).
 //! For details on the supported features, please check the documentation of `foa_sta`.
-//!
-//! Maintained by: Frostie31
 #![no_std]
 
 use core::{array, mem};
@@ -39,7 +38,8 @@ use lmac::SharedLMacState;
 #[cfg(not(feature = "arc_buffers"))]
 use esp_wifi_hal::BorrowedBuffer;
 
-pub(crate) mod fmt;
+#[macro_use]
+extern crate defmt_or_log;
 
 mod bg_task;
 mod lmac;

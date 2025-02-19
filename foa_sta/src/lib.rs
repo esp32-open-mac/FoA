@@ -3,22 +3,12 @@
 //! This module implements a station (STA) interface for FoA.
 //!
 //! ## Usage
-//! The STA interface, that's provided consists of a few parts.
-//!
-//! | struct | purpose |
-//! | -- | -- |
-//! | [StaControl] | Controlling the STA interface. |
-//! | [StaRunner] | The background runner for the STA interface. |
-//! | [StaInput] | Entry point for frames addressed to this interface. |
-//! | [StaSharedResources] | Shared resources for the STA interface. |
-//! | [StaNetDevice] | [Device](ch::Device) for `embassy_net`. |
-//!
-//! For you the user, only the [StaInterface] and [StaControl] are relevant, since all other types
-//! are internal.
-//!
-//! To use this interface, just call either [foa::new_with_single_interface] or [foa::new_with_multiple_interfaces], with [StaInterface] in the turbofish operator.
-//! Which for this interface will return you `(StaControl, StaNetDevice)`
-//!
+//! To initialize a STA interface, call [new_sta_interface] with a [VirtualInterface] you got from
+//! calling [foa::init], a mutable reference to [StaResources] and optionally a [MACAddress].
+//! In return, you'll get a `(StaControl, StaRunner, StaNetDevice)`. For the stack to work, you
+//! have to call [StaRunner::run], either in a separate task or by joining the future with another
+//! one. Once you have done that, you can use the [StaControl] to control the interface, and pass
+//! the [StaNetDevice] to [embassy_net].
 //! ## Status
 //! Currently only very basic operations are supported and much of this is work in progress. More
 //! operations will follow in the future.
@@ -47,7 +37,8 @@ use ieee80211::{
 use embassy_net_driver_channel::{self as ch};
 use foa::{esp_wifi_hal::WiFiRate, LMacError, ReceivedFrame, VirtualInterface};
 
-mod fmt;
+#[macro_use]
+extern crate defmt_or_log;
 
 pub mod control;
 mod runner;
@@ -151,7 +142,7 @@ impl ConnectionStateTracker {
     }
 }
 
-/// Shared resources for the [StaInterface].
+/// Shared resources for the STA interface.
 pub struct StaResources<'foa> {
     // RX routing.
     rx_router: RxRouter,

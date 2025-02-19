@@ -26,10 +26,12 @@ rand_core = "0.6.4"
 heapless = "0.8.0"
 reqwless = { git = "https://github.com/drogue-iot/reqwless.git", version = "0.13.0", default-features = false }
 embedded-io-async = "0.6.1"
-embassy-time = { version = "0.4.0", features = ["defmt"] }
-embassy-executor = { version = "0.7.0", features = ["defmt", "task-arena-size-32768"] }
+embassy-time = { version = "0.4.0" }
+embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768"] }
 
 defmt = { version = "0.3.10", optional = true }
+defmt-or-log = { version = "0.2.1", default-features = false }
+log = { version = "0.4.25", optional = true }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -46,6 +48,8 @@ opt-level = 's'
 overflow-checks = false
 
 [features]
-defmt = ["dep:defmt", "foa/defmt", "foa_sta/defmt"]
+defmt = ["dep:defmt", "foa/defmt", "foa_sta/defmt", "defmt-or-log/defmt", "embassy-time/defmt", "embassy-executor/defmt"]
+log = ["dep:log", "defmt-or-log/log"]
+
 esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32", "foa/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2", "foa/esp32s2"]
