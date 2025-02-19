@@ -40,7 +40,9 @@ use foa::{esp_wifi_hal::WiFiRate, LMacError, ReceivedFrame, VirtualInterface};
 #[macro_use]
 extern crate defmt_or_log;
 
-pub mod control;
+mod control;
+pub use control::*;
+
 mod runner;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
