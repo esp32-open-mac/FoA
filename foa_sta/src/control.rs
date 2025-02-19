@@ -8,9 +8,8 @@ use ieee80211::{
     common::AssociationID, elements::DSSSParameterSetElement, mac_parser::MACAddress,
     mgmt_frame::BeaconFrame, scroll::Pread,
 };
-use log::debug;
 
-use foa::{esp_wifi_hal::BorrowedBuffer, lmac::LMacInterfaceControl};
+use foa::{LMacInterfaceControl, ReceivedFrame};
 
 use crate::{
     operations::{
@@ -37,7 +36,7 @@ pub struct BSS {
 pub struct StaControl<'vif, 'foa> {
     // Low level RX/TX.
     pub(crate) rx_router: &'vif RxRouter,
-    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
 
     // Misc.
@@ -49,7 +48,7 @@ pub struct StaControl<'vif, 'foa> {
 impl StaControl<'_, '_> {
     /// Set the MAC address for the STA interface.
     pub async fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
-        if self.connection_state.connection_info().await.is_some() {
+        if self.connection_state.connection_info().is_some() {
             Err(StaError::StillConnected)
         } else {
             self.mac_address = MACAddress::new(mac_address);
@@ -156,10 +155,11 @@ impl StaControl<'_, '_> {
         .await?;
         ess.ok_or(StaError::UnableToFindEss)
     }
+    /// Check if we're currently connected to a network.
+    pub fn is_connected(&self) -> bool {
+        self.connection_state.connection_info().is_some()
+    }
     /// Connect to a network.
-    ///
-    /// NOTE: Dropping the future returned by this, may leave the channel locked by this interface,
-    /// even though no connection was ever established.
     pub async fn connect(&mut self, bss: &BSS, timeout: Option<Duration>) -> Result<(), StaError> {
         let aid = ConnectionOperation {
             rx_router: self.rx_router,
@@ -181,7 +181,7 @@ impl StaControl<'_, '_> {
     }
     /// Disconnect from the current network.
     pub async fn disconnect(&mut self) -> Result<(), StaError> {
-        let Some(connection_info) = self.connection_state.connection_info().await else {
+        let Some(connection_info) = self.connection_state.connection_info() else {
             return Err(StaError::NotConnected);
         };
         send_deauth(self.interface_control, &connection_info).await;
@@ -195,7 +195,6 @@ impl StaControl<'_, '_> {
     pub async fn get_aid(&self) -> Option<AssociationID> {
         self.connection_state
             .connection_info()
-            .await
             .map(|connection_info| connection_info.aid)
     }
 }

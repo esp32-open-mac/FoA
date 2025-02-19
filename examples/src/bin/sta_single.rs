@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use defmt::info;
+
 use embassy_executor::Spawner;
 use embassy_net::{
     dns::{DnsQueryType, DnsSocket},
@@ -8,11 +10,14 @@ use embassy_net::{
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
 use embassy_time::Timer;
+
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
-use foa::{bg_task::FoARunner, FoAResources, VirtualInterface};
+use esp_println as _;
+
+use foa::{FoAResources, FoARunner, VirtualInterface};
 use foa_sta::{StaNetDevice, StaResources, StaRunner};
-use log::info;
+
 use rand_core::RngCore;
 
 macro_rules! mk_static {
@@ -24,7 +29,7 @@ macro_rules! mk_static {
     }};
 }
 
-const SSID: &str = "stuxnet"; // My test router.
+const SSID: &str = env!("SSID");
 
 #[embassy_executor::task]
 async fn foa_task(mut foa_runner: FoARunner<'static>) -> ! {
@@ -41,7 +46,6 @@ async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
@@ -83,11 +87,9 @@ async fn main(spawner: Spawner) {
 
     // Wait for DHCP, not necessary when using static IP
     info!("waiting for DHCP...");
-    while !net_stack.is_config_up() {
-        Timer::after_millis(100).await;
-    }
+    net_stack.wait_config_up().await;
     info!(
-        "DHCP is now up! Got address {}",
+        "DHCP is now up! Got address {:?}",
         net_stack.config_v4().unwrap().address
     );
     let dns_socket = DnsSocket::new(net_stack);
@@ -95,7 +97,7 @@ async fn main(spawner: Spawner) {
         .query("tcpbin.org", DnsQueryType::A)
         .await
         .expect("DNS lookup failure")[0];
-    info!("Queried tcpbin.com: {tcp_bin:?}");
+    info!("Queried tcpbin.com: {:?}", tcp_bin);
     let endpoint = embassy_net::IpEndpoint {
         addr: tcp_bin,
         port: 4242,

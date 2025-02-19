@@ -29,10 +29,14 @@
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
 
+use core::cell::RefCell;
+
 use control::StaControl;
 use embassy_net::driver::HardwareAddress;
 use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex, channel::Channel, mutex::Mutex, signal::Signal,
+    blocking_mutex::{raw::NoopRawMutex, NoopMutex},
+    channel::Channel,
+    signal::Signal,
 };
 use embassy_time::Duration;
 use ieee80211::{
@@ -41,11 +45,9 @@ use ieee80211::{
 };
 
 use embassy_net_driver_channel::{self as ch};
-use foa::{
-    esp_wifi_hal::{BorrowedBuffer, WiFiRate},
-    lmac::LMacError,
-    VirtualInterface,
-};
+use foa::{esp_wifi_hal::WiFiRate, LMacError, ReceivedFrame, VirtualInterface};
+
+mod fmt;
 
 pub mod control;
 mod runner;
@@ -63,8 +65,10 @@ pub enum StaError {
     LMacError(LMacError),
     /// The scan was unable to find the specified ESS.
     UnableToFindEss,
-    AuthenticationTimeout,
-    AssociationTimeout,
+    /// No ACK was received in time.
+    AckTimeout,
+    /// No response from the BSS was received in time, although an ACK was received.
+    ResponseTimeout,
     /// Deserializing a received frame failed.
     FrameDeserializationFailed,
     /// Authentication failed with the specified status code.
@@ -100,25 +104,26 @@ pub(crate) enum ConnectionState {
 }
 /// Tracks the connection state.
 pub(crate) struct ConnectionStateTracker {
-    connection_state: Mutex<NoopRawMutex, ConnectionState>,
+    connection_state: NoopMutex<RefCell<ConnectionState>>,
     connection_state_signal: Signal<NoopRawMutex, ()>,
 }
 impl ConnectionStateTracker {
     /// Create a new state tracker.
     pub const fn new() -> Self {
         Self {
-            connection_state: Mutex::new(ConnectionState::Disconnected),
+            connection_state: NoopMutex::new(RefCell::new(ConnectionState::Disconnected)),
             connection_state_signal: Signal::new(),
         }
     }
     /// Signal a new state.
     pub async fn signal_state(&self, new_state: ConnectionState) {
-        *self.connection_state.lock().await = new_state;
+        self.connection_state
+            .lock(|rc| *rc.borrow_mut() = new_state);
         self.connection_state_signal.signal(());
     }
     /// Get the connection info.
-    pub async fn connection_info(&self) -> Option<ConnectionInfo> {
-        match *self.connection_state.lock().await {
+    pub fn connection_info(&self) -> Option<ConnectionInfo> {
+        match self.connection_state.lock(|rc| *rc.borrow()) {
             ConnectionState::Connected(connection_info) => Some(connection_info),
             ConnectionState::Disconnected => None,
         }
@@ -126,7 +131,8 @@ impl ConnectionStateTracker {
     /// Wait for a connected state to be signaled.
     pub async fn wait_for_connection(&self) -> ConnectionInfo {
         loop {
-            let ConnectionState::Connected(connection_info) = *self.connection_state.lock().await
+            let ConnectionState::Connected(connection_info) =
+                self.connection_state.lock(|rc| *rc.borrow())
             else {
                 self.connection_state_signal.wait().await;
                 continue;
@@ -137,7 +143,7 @@ impl ConnectionStateTracker {
     /// Wait for a disconnected state to be signaled.
     pub async fn wait_for_disconnection(&self) {
         while matches!(
-            *self.connection_state.lock().await,
+            self.connection_state.lock(|rc| *rc.borrow()),
             ConnectionState::Connected(_)
         ) {
             self.connection_state_signal.wait().await
@@ -149,8 +155,8 @@ impl ConnectionStateTracker {
 pub struct StaResources<'foa> {
     // RX routing.
     rx_router: RxRouter,
-    bg_queue: Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
-    user_queue: Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    bg_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
+    user_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
 
     // Networking.
     channel_state: ch::State<MTU, 4, 4>,
@@ -158,8 +164,8 @@ pub struct StaResources<'foa> {
     // State tracking.
     connection_state: ConnectionStateTracker,
 }
-impl Default for StaResources<'_> {
-    fn default() -> Self {
+impl StaResources<'_> {
+    pub const fn new() -> Self {
         Self {
             rx_router: RxRouter::new(),
             bg_queue: Channel::new(),
@@ -167,6 +173,11 @@ impl Default for StaResources<'_> {
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
         }
+    }
+}
+impl Default for StaResources<'_> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

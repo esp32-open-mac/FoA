@@ -1,13 +1,17 @@
 #![no_std]
 #![no_main]
 
+use defmt::info;
+
 use embassy_executor::Spawner;
 use embassy_futures::join::join3;
+
 use esp_backtrace as _;
 use esp_hal::timer::timg::TimerGroup;
+use esp_println as _;
+
 use foa::FoAResources;
 use foa_sta::StaResources;
-use log::info;
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -21,7 +25,6 @@ macro_rules! mk_static {
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);

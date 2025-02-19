@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+defmt = { version = "0.3.10", optional = true }
 embassy-futures = "0.1.1"
 embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
 embassy-net-driver-channel = "0.3.0"
@@ -14,9 +15,11 @@ foa = { path = "../foa/" }
 heapless = "0.8.0"
 ieee80211 = { version = "0.5.3", default-features = false }
 llc-rs = "0.1.0"
-log = "0.4.22"
+log = { version = "0.4.25", optional = true }
 
 [features]
 esp32 = ["foa/esp32"]
 esp32s2 = ["foa/esp32s2"]
+log = ["dep:log"]
+defmt = ["dep:defmt", "ieee80211/defmt", "foa/defmt"]
 

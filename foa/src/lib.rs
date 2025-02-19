@@ -1,24 +1,61 @@
+//! # Ferris-on-Air (FoA)
+//! Ferris-on-Air is an asynchronous IEEE 802.11 MAC stack for the ESP32 series of chips. It is
+//! build on top of [esp_wifi_hal], which is the driver for the Wi-Fi peripheral, and is based on
+//! the reverse engineering efforts of the [ESP32-Open-MAC project](https://esp32-open-mac.be/).
+//! ## Note:
+//! This project is neither maintained by nor in anyway affiliated with Espressif. You're using
+//! this at your own risk!
+//! ## Structure
+//! The [foa] crate is the central element of the stack. It doesn't implement any specific
+//! operating modes, but implements the APIs to do so. When calling [init], you get a
+//! [FoARunner] and a set of [VirtualInterfaces](VirtualInterface), which can then be passed on to
+//! interface implementations.
+//!
+//! Currently, the following operating modes have an interface implemented for them.
+//!
+//! Operating Mode | Implementation | Description | Maintainer
+//! -- | -- | -- | --
+//! STA | [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta) | A simple client Implementation. | `Frostie314159`
+//!
+//!
+//! ### Station (STA)
+//! A simple STA mode interface is implemented in [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta).
+//! For details on the supported features, please check the documentation of `foa_sta`.
+//!
+//! Maintained by: Frostie31
 #![no_std]
-#![allow(async_fn_in_trait)]
 
 use core::{array, mem};
 
-use bg_task::FoARunner;
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     channel::{Channel, DynamicReceiver},
 };
 use esp_config::esp_config_int;
 use esp_hal::peripherals::{ADC2, RADIO_CLK, WIFI};
-use esp_wifi_hal::{BorrowedBuffer, DMAResources, RxFilterBank, ScanningMode, WiFi};
-use lmac::{LMacInterfaceControl, SharedLMacState};
+use esp_wifi_hal::{DMAResources, RxFilterBank, ScanningMode, WiFi};
+use lmac::SharedLMacState;
 
-pub mod bg_task;
-pub mod lmac;
-// mod rx_arc_pool;
-pub mod tx_buffer_management;
+#[cfg(not(feature = "arc_buffers"))]
+use esp_wifi_hal::BorrowedBuffer;
+
+pub(crate) mod fmt;
+
+mod bg_task;
+mod lmac;
+#[cfg(feature = "arc_buffers")]
+mod rx_arc_pool;
+mod tx_buffer_management;
+
+pub use bg_task::FoARunner;
+pub use lmac::*;
+#[cfg(feature = "arc_buffers")]
+pub use rx_arc_pool::RxArcBuffer;
+pub use tx_buffer_management::TxBuffer;
 
 pub use esp_wifi_hal;
+#[cfg(feature = "arc_buffers")]
+use rx_arc_pool::RxArcPool;
 use tx_buffer_management::TxBufferManager;
 
 const RX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_COUNT");
@@ -28,6 +65,9 @@ const TX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_COUN
 const TX_BUFFER_SIZE: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_SIZE");
 
 /// A frame received from the driver.
+#[cfg(feature = "arc_buffers")]
+pub type ReceivedFrame<'res> = RxArcBuffer<'res>;
+#[cfg(not(feature = "arc_buffers"))]
 pub type ReceivedFrame<'res> = BorrowedBuffer<'res>;
 /// A receiver to the RX queue of an interface.
 pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
@@ -35,6 +75,8 @@ pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
 /// The resources required by the WiFi stack.
 pub struct FoAResources {
     dma_resources: DMAResources<RX_BUFFER_SIZE, RX_BUFFER_COUNT>,
+    #[cfg(feature = "arc_buffers")]
+    arc_pool: RxArcPool,
     tx_buffers: [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
     tx_buffer_manager: Option<TxBufferManager<TX_BUFFER_COUNT>>,
     shared_lmac_state: Option<SharedLMacState>,
@@ -44,6 +86,8 @@ impl FoAResources {
     pub fn new() -> Self {
         Self {
             dma_resources: DMAResources::new(),
+            #[cfg(feature = "arc_buffers")]
+            arc_pool: RxArcPool::new(),
             tx_buffers: [[0u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
             tx_buffer_manager: None,
             shared_lmac_state: None,
@@ -104,6 +148,12 @@ pub fn init(
     // We do this only to avoid self referential structs. All of the destination lifetimes are the
     // lifetime of the resources struct and therefore valid.
     let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.dma_resources);
+    extern "C" {
+        fn phy_set_most_tpw(power: u8);
+    }
+    unsafe {
+        phy_set_most_tpw(84);
+    }
     resources.shared_lmac_state = Some(SharedLMacState::new(wifi));
     resources.tx_buffer_manager = Some(unsafe { TxBufferManager::new(&mut resources.tx_buffers) });
     let (lmac_receive_endpoint, lmac_interface_controls) =
@@ -134,6 +184,8 @@ pub fn init(
         FoARunner {
             lmac_receive_endpoint,
             rx_queue_senders,
+            #[cfg(feature = "arc_buffers")]
+            rx_arc_pool: &resources.arc_pool,
         },
     )
 }

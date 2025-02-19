@@ -6,29 +6,30 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "0.23.1"
-esp-hal-embassy = "0.6.0"
-esp-alloc = "0.6.0"
+esp-hal = { version = "0.23.1", features = [] }
+esp-hal-embassy = { version = "0.6.0", features = [] }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal", features = [] }
 esp-backtrace = { version = "0.15.0", features = [
     "panic-handler",
-    "println",
+    "defmt"
 ] }
-esp-println = { version = "0.13.0", features = ["log"] }
+esp-println = { version = "0.13.0", features = ["defmt-espflash", "critical-section", "uart"], default-features = false }
 
-embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
-embassy-futures = "0.1.1"
+embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns", "defmt"] }
+embassy-futures = { version = "0.1.1", features = ["defmt"] }
 
-foa = { version = "0.1.0", path = "../foa", features = ["driver_logs"] }
+foa = { version = "0.1.0", path = "../foa", features = ["arc_buffers"] }
 foa_sta = { version = "0.1.0", path = "../foa_sta" }
 
 static_cell = "2.1.0"
 rand_core = "0.6.4"
-log = "0.4.22"
 heapless = "0.8.0"
 reqwless = { git = "https://github.com/drogue-iot/reqwless.git", version = "0.13.0", default-features = false }
 embedded-io-async = "0.6.1"
-embassy-time = "0.4.0"
-embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768"] }
+embassy-time = { version = "0.4.0", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = ["defmt", "task-arena-size-32768"] }
+
+defmt = { version = "0.3.10", optional = true }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -45,6 +46,6 @@ opt-level = 's'
 overflow-checks = false
 
 [features]
-default = ["esp32"]
+defmt = ["dep:defmt", "foa/defmt", "foa_sta/defmt"]
 esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32", "foa/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2", "foa/esp32s2"]

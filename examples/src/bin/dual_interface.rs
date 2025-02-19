@@ -1,39 +1,31 @@
 #![no_std]
 #![no_main]
 
+use defmt::{debug, error, info};
+
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
-use embassy_net::dns::DnsSocket;
-use embassy_net::udp::PacketMetadata;
-use embassy_net::udp::UdpSocket;
-use embassy_net::DhcpConfig;
-use embassy_net::Runner as NetRunner;
-use embassy_net::StackResources as NetStackResources;
-use embassy_time::Duration;
-use embassy_time::Timer;
+use embassy_futures::join::join_array;
+use embassy_net::{
+    dns::DnsSocket,
+    udp::{PacketMetadata, UdpSocket},
+    DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
+};
+use embassy_time::{Duration, Timer};
+
+use esp_alloc::heap_allocator;
 use esp_backtrace as _;
-use esp_hal::rng::Rng;
-use esp_hal::timer::timg::TimerGroup;
-use foa::bg_task::FoARunner;
-use foa::FoAResources;
-use foa::VirtualInterface;
-use foa_sta::StaNetDevice;
-use foa_sta::StaResources;
-use foa_sta::StaRunner;
-use log::info;
+use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+use esp_println as _;
+
+use foa::{FoAResources, FoARunner};
+use foa_sta::{StaNetDevice, StaResources, StaRunner};
+
 use rand_core::RngCore;
 
-const SSID_ZERO: &str = "stuxnet";
-const SSID_ONE: &str = "stuxnet";
+extern crate alloc;
+use alloc::boxed::Box;
 
-macro_rules! mk_static {
-    ($t:ty,$val:expr) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write(($val));
-        x
-    }};
-}
+const SSID: &str = env!("SSID");
 #[embassy_executor::task]
 async fn foa_task(mut foa_runner: FoARunner<'static>) -> ! {
     foa_runner.run().await
@@ -46,22 +38,18 @@ async fn sta_task(mut sta_runner: StaRunner<'static, 'static>) -> ! {
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
     net_runner.run().await
 }
-async fn run_net_stack(
-    spawner: &Spawner,
-    net_stack_resources: &'static mut NetStackResources<3>,
-    net_device: StaNetDevice<'static>,
-) {
+async fn run_net_stack(spawner: &Spawner, net_device: StaNetDevice<'static>) {
+    let net_stack_resources = Box::new(NetStackResources::<3>::new());
     let (net_stack, net_runner) = embassy_net::new(
         net_device,
         embassy_net::Config::dhcpv4(DhcpConfig::default()),
-        net_stack_resources,
+        Box::leak(net_stack_resources),
         1234,
     );
+    debug!("Starting net stack.");
     spawner.spawn(net_task(net_runner)).unwrap();
     info!("waiting for DHCP...");
-    while !net_stack.is_config_up() {
-        Timer::after_millis(100).await;
-    }
+    net_stack.wait_config_up().await;
     info!(
         "DHCP is now up! Got address {}",
         net_stack.config_v4().unwrap().address
@@ -71,21 +59,21 @@ async fn run_net_stack(
         .query("tcpbin.org", embassy_net::dns::DnsQueryType::A)
         .await
         .expect("DNS lookup failure")[0];
-    info!("Queried tcpbin.com: {tcp_bin:?}");
+    info!("Queried tcpbin.com: {:?}", tcp_bin);
     let endpoint = embassy_net::IpEndpoint {
         addr: tcp_bin,
         port: 4242,
     };
-    let mut rx_buffer = [0u8; 1600];
-    let mut tx_buffer = [0u8; 1600];
+    let mut rx_buffer = Box::new([0u8; 1600]);
+    let mut tx_buffer = Box::new([0u8; 1600]);
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
     let mut tx_meta = [PacketMetadata::EMPTY; 16];
     let mut udp_socket = UdpSocket::new(
         net_stack,
         &mut rx_meta,
-        &mut rx_buffer,
+        rx_buffer.as_mut(),
         &mut tx_meta,
-        &mut tx_buffer,
+        tx_buffer.as_mut(),
     );
     info!("Connected to tcpbin.com");
     udp_socket.bind(endpoint).unwrap();
@@ -99,74 +87,52 @@ async fn run_net_stack(
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
-    let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_println::logger::init_logger_from_env();
+    let peripherals =
+        esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz));
+
+    heap_allocator!(size: 100 * 1024);
+    error!("Initialized FoA with two interfaces.");
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
-    let stack_resources = mk_static!(FoAResources, FoAResources::new());
-    let ([sta_vif0, sta_vif1, ..], foa_runner) = foa::init(
-        stack_resources,
+    let foa_resources = Box::new(FoAResources::new());
+    let ([vif_0, vif_1, ..], foa_runner) = foa::init(
+        Box::leak(foa_resources),
         peripherals.WIFI,
         peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
+    extern "C" {
+        fn phy_set_most_tpw(power: u8);
+    }
+    unsafe {
+        phy_set_most_tpw(84);
+    }
     spawner.spawn(foa_task(foa_runner)).unwrap();
 
-    let sta_resources = mk_static!(
-        (StaResources<'static>, StaResources<'static>),
-        (StaResources::default(), StaResources::default())
-    );
-    let (mut sta_control_zero, sta_runner_zero, net_device_zero) = foa_sta::new_sta_interface(
-        mk_static!(VirtualInterface<'static>, sta_vif0),
-        &mut sta_resources.0,
-        None,
-    );
-    spawner.spawn(sta_task(sta_runner_zero)).unwrap();
-
-    let (mut sta_control_one, sta_runner_one, net_device_one) = foa_sta::new_sta_interface(
-        mk_static!(VirtualInterface<'static>, sta_vif1),
-        &mut sta_resources.1,
-        None,
-    );
-    spawner.spawn(sta_task(sta_runner_one)).unwrap();
     let mut mac_address = [0u8; 6];
     let mut rng = Rng::new(peripherals.RNG);
-    rng.fill_bytes(mac_address.as_mut_slice());
-    sta_control_zero.set_mac_address(mac_address).await.unwrap();
-    rng.fill_bytes(mac_address.as_mut_slice());
-    sta_control_one.set_mac_address(mac_address).await.unwrap();
 
-    let mut known_bss = heapless::Vec::new();
-    sta_control_zero
-        .scan::<16>(None, &mut known_bss)
-        .await
-        .unwrap();
+    let mut stas = [vif_0, vif_1].map(|vif| {
+        rng.fill_bytes(mac_address.as_mut_slice());
+        let sta_resources = Box::new(StaResources::new());
+        let vif = Box::new(vif);
+        let (sta_control, sta_runner, sta_net_device) =
+            foa_sta::new_sta_interface(Box::leak(vif), Box::leak(sta_resources), Some(mac_address));
+        spawner.spawn(sta_task(sta_runner)).unwrap();
+        (sta_control, sta_net_device)
+    });
 
-    let (zero, one) = join(
-        sta_control_zero.connect(
-            known_bss.iter().find(|bss| bss.ssid == SSID_ZERO).unwrap(),
-            Some(Duration::from_secs(1)),
-        ),
-        sta_control_one.connect(
-            known_bss.iter().find(|bss| bss.ssid == SSID_ONE).unwrap(),
-            Some(Duration::from_secs(1)),
-        ),
-    )
-    .await;
-    zero.unwrap();
-    one.unwrap();
-    join(
-        run_net_stack(
-            &spawner,
-            mk_static!(NetStackResources<3>, NetStackResources::new()),
-            net_device_zero,
-        ),
-        run_net_stack(
-            &spawner,
-            mk_static!(NetStackResources<3>, NetStackResources::new()),
-            net_device_one,
-        ),
-    )
+    let bss = stas[0].0.find_ess(None, SSID).await.unwrap();
+    join_array(stas.map(|(mut sta_control, sta_net_device)| {
+        let bss = bss.clone();
+        async move {
+            sta_control
+                .connect(&bss, Some(Duration::from_secs(1)))
+                .await
+                .unwrap();
+            run_net_stack(&spawner, sta_net_device).await;
+        }
+    }))
     .await;
 }

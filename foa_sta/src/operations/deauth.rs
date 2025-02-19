@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use foa::{esp_wifi_hal::TxParameters, lmac::LMacInterfaceControl};
+use foa::{esp_wifi_hal::TxParameters, LMacInterfaceControl};
 use ieee80211::{
     common::{IEEE80211Reason, SequenceControl},
     element_chain,

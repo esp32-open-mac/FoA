@@ -13,9 +13,8 @@ use embassy_sync::{
 use embassy_time::{Duration, Ticker};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
-    esp_wifi_hal::{BorrowedBuffer, RxFilterBank, TxParameters},
-    lmac::LMacInterfaceControl,
-    ReceivedFrame, RxQueueReceiver,
+    esp_wifi_hal::{RxFilterBank, TxParameters},
+    LMacInterfaceControl, ReceivedFrame, RxQueueReceiver,
 };
 use ieee80211::{
     common::{DataFrameSubtype, FCFFlags, FrameType, SequenceControl},
@@ -26,16 +25,15 @@ use ieee80211::{
     GenericFrame,
 };
 use llc_rs::SnapLlcFrame;
-use log::debug;
 
 use crate::{
+    operations::deauth::send_deauth,
     rx_router::{RxQueue, RxRouter},
     ConnectionState, ConnectionStateTracker, DEFAULT_PHY_RATE, MTU,
 };
-
 pub(crate) struct ConnectionRunner<'vif, 'foa> {
     // Low level RX/TX.
-    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, BorrowedBuffer<'foa>, 4>,
+    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
 
     // Upper layer control.
@@ -59,7 +57,7 @@ impl ConnectionRunner<'_, '_> {
         interface_control: &LMacInterfaceControl<'_>,
         connection_state: &ConnectionStateTracker,
     ) {
-        let Some(connection_info) = connection_state.connection_info().await else {
+        let Some(connection_info) = connection_state.connection_info() else {
             return;
         };
         let Ok(ethernet_frame) = buffer.pread::<Ethernet2Frame>(0) else {
@@ -97,7 +95,7 @@ impl ConnectionRunner<'_, '_> {
                 true,
             )
             .await;
-        debug!(
+        trace!(
             "Transmitted {} bytes to {}",
             buffer.len(),
             ethernet_frame.header.dst
@@ -114,7 +112,7 @@ impl ConnectionRunner<'_, '_> {
         self.set_disconnected().await;
     }
     /// Handle a frame arriving on the background queue, during a connection.
-    async fn handle_bg_rx(&mut self, buffer: BorrowedBuffer<'_>, beacon_timeout: &mut Ticker) {
+    async fn handle_bg_rx(&mut self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
         let _ = match_frames! {
             buffer.mpdu_buffer(),
             deauth = DeauthenticationFrame => {
@@ -154,6 +152,11 @@ impl ConnectionRunner<'_, '_> {
                     self.tx_runner.tx_done();
                 }
                 Either4::Fourth(_) => {
+                    send_deauth(
+                        &self.interface_control,
+                        &self.connection_state.connection_info().unwrap(),
+                    )
+                    .await;
                     self.connection_state
                         .signal_state(ConnectionState::Disconnected)
                         .await;
@@ -192,8 +195,8 @@ impl ConnectionRunner<'_, '_> {
 pub(crate) struct RoutingRunner<'vif, 'foa> {
     // Low level RX/TX.
     pub(crate) bg_queue_sender: DynamicSender<'vif, ReceivedFrame<'foa>>,
+    pub(crate) user_queue_sender: DynamicSender<'vif, ReceivedFrame<'foa>>,
     pub(crate) interface_rx_queue: &'vif RxQueueReceiver<'foa>,
-    pub(crate) user_queue_sender: DynamicSender<'vif, BorrowedBuffer<'foa>>,
 
     // Upper layer control.
     pub(crate) rx_runner: RxRunner<'vif, MTU>,
@@ -203,12 +206,13 @@ pub(crate) struct RoutingRunner<'vif, 'foa> {
 }
 impl RoutingRunner<'_, '_> {
     /// Forward a received data frame to higher layers.
-    async fn handle_data_rx(
+    fn handle_data_rx(
         rx_runner: &mut RxRunner<'_, MTU>,
         data_frame: DataFrame<'_, DataFrameReadPayload<'_>>,
         connection_state: &ConnectionStateTracker,
     ) {
-        let Some(_connection_info) = connection_state.connection_info().await else {
+        // (Frostie314159) NOTE: This is extremely ugly.
+        let Some(_connection_info) = connection_state.connection_info() else {
             return;
         };
         let Some(destination_address) = data_frame.header.destination_address() else {
@@ -220,13 +224,18 @@ impl RoutingRunner<'_, '_> {
         let Some(DataFrameReadPayload::Single(payload)) = data_frame.payload else {
             return;
         };
+        // The body of every data frame contains a logical link control (LLC) frame, as specified
+        // in IEEE 802.2.
         let Ok(llc_payload) = payload.pread::<SnapLlcFrame>(0) else {
             return;
         };
+        // We don't wait on an RX buffer becoming available here, since doing so could stall the
+        // routing task.
         let Some(rx_buf) = rx_runner.try_rx_buf() else {
-            debug!("Dropping MSDU, because no buffers are available.");
+            trace!("Dropping MSDU, because no buffers are available.");
             return;
         };
+        // Here we serialize the ethernet frame.
         let Ok(written) = rx_buf.pwrite(
             Ethernet2Frame {
                 header: Ethernet2Header {
@@ -241,8 +250,9 @@ impl RoutingRunner<'_, '_> {
             return;
         };
         rx_runner.rx_done(written);
-        debug!("Received {written} bytes from {}", source_address);
+        trace!("Received {} bytes from {}", written, source_address);
     }
+    /// Run the routing task.
     async fn run(&mut self) -> ! {
         loop {
             let borrowed_buffer = self.interface_rx_queue.receive().await;
@@ -250,12 +260,31 @@ impl RoutingRunner<'_, '_> {
             let Ok(generic_frame) = GenericFrame::new(borrowed_buffer.mpdu_buffer(), false) else {
                 continue;
             };
+            let address_1 = generic_frame.address_1();
+            // Here we toss out frames, where the first address doesn't meet one of these conditions:
+            // 1. Is multicast
+            // 2. Is the address, with which we're already associated with a BSS.
+            // 3. Is the address, with which we're currently associating with a BSS.
+            if !address_1.is_multicast() {
+                if let Some(own_address) = self
+                    .connection_state
+                    .connection_info()
+                    .map(|connection_info| connection_info.own_address)
+                    .or_else(|| self.rx_router.get_connecting_mac_address())
+                {
+                    if own_address != address_1 {
+                        continue;
+                    }
+                }
+            }
+            // To reduce latency, we process all data frames here directly.
             if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type() {
                 let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
                     continue;
                 };
-                Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state).await;
+                Self::handle_data_rx(&mut self.rx_runner, data_frame, self.connection_state);
             } else {
+                // We ask the RX router, where all other frames should go.
                 let _ = match self.rx_router.target_queue_for_frame(&generic_frame) {
                     RxQueue::User => &self.user_queue_sender,
                     RxQueue::Background => &self.bg_queue_sender,

@@ -1,7 +1,6 @@
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
-use foa::{esp_wifi_hal::BorrowedBuffer, esp_wifi_hal::ScanningMode, lmac::LMacInterfaceControl};
-use log::debug;
+use foa::{esp_wifi_hal::ScanningMode, LMacInterfaceControl, ReceivedFrame};
 
 use crate::{
     rx_router::{Operation, RxQueue, RxRouter},
@@ -38,7 +37,7 @@ impl Default for ScanConfig<'_> {
 /// this, which will restore everything to it's original state.
 pub(crate) struct ScanOperation<'a, 'res> {
     pub(crate) rx_router: &'a RxRouter,
-    pub(crate) rx_queue: &'a Channel<NoopRawMutex, BorrowedBuffer<'res>, 4>,
+    pub(crate) rx_queue: &'a Channel<NoopRawMutex, ReceivedFrame<'res>, 4>,
     pub(crate) router_queue: RxQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
 }
@@ -51,7 +50,7 @@ impl ScanOperation<'_, '_> {
     pub async fn run(
         self,
         scan_config: Option<ScanConfig<'_>>,
-        mut beacon_rx_cb: impl FnMut(BorrowedBuffer<'_>) -> bool,
+        mut beacon_rx_cb: impl FnMut(ReceivedFrame<'_>) -> bool,
     ) -> Result<(), StaError> {
         // We begin the off channe operation.
         let mut off_channel_operation = self

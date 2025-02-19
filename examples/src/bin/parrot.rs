@@ -15,13 +15,13 @@ use esp_hal::{
     timer::timg::TimerGroup,
     uart::{self, Uart},
 };
-use foa::{bg_task::FoARunner, FoAResources, VirtualInterface};
+use esp_println as _;
+use foa::{FoAResources, FoARunner, VirtualInterface};
 use foa_sta::{StaNetDevice, StaResources, StaRunner};
-use log::info;
 use rand_core::RngCore;
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
-const SSID: &str = "Freifunk";
+const SSID: &str = env!("SSID");
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -32,6 +32,17 @@ macro_rules! mk_static {
     }};
 }
 
+#[collapse_debuginfo(yes)]
+macro_rules! info {
+    ($s:literal $(, $x:expr)* $(,)?) => {
+        {
+            #[cfg(feature = "defmt")]
+            ::defmt::info!($s $(, $x)*);
+            #[cfg(not(feature="defmt"))]
+            let _ = ($( & $x ),*);
+        }
+    };
+}
 #[embassy_executor::task]
 async fn foa_task(mut foa_runner: FoARunner<'static>) -> ! {
     foa_runner.run().await
@@ -47,7 +58,6 @@ async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
