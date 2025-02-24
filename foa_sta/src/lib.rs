@@ -21,7 +21,6 @@
 
 use core::cell::RefCell;
 
-use control::StaControl;
 use embassy_net::driver::HardwareAddress;
 use embassy_sync::{
     blocking_mutex::{raw::NoopRawMutex, NoopMutex},
