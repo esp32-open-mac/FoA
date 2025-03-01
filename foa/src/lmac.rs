@@ -557,6 +557,10 @@ impl<'res> LMacInterfaceControl<'res> {
         base_mac[5] += self.rx_filter_interface as u8;
         base_mac
     }
+    /// Get the current channel.
+    pub fn get_current_channel(&self) -> u8 {
+        self.shared_state.wifi.get_channel()
+    }
     /// Set the filter parameters.
     ///
     /// NOTE: You need to set **and** enable the filter.
