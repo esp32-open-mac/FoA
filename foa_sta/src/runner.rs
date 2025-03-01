@@ -46,11 +46,10 @@ pub(crate) struct ConnectionRunner<'vif, 'foa> {
 }
 impl ConnectionRunner<'_, '_> {
     /// Set the internal state to disconnected.
-    async fn set_disconnected(&self) {
+    fn set_disconnected(&self) {
         self.interface_control.unlock_channel();
         self.connection_state
-            .signal_state(ConnectionState::Disconnected)
-            .await;
+            .signal_state(ConnectionState::Disconnected);
     }
     /// Transmit a data frame to the AP.
     async fn handle_data_tx(
@@ -106,19 +105,19 @@ impl ConnectionRunner<'_, '_> {
     /// Handle a deauth frame.
     ///
     /// NOTE: Currently this immediately leads to disconnection.
-    async fn handle_deauth(&mut self, deauth: DeauthenticationFrame<'_>) {
+    fn handle_deauth(&mut self, deauth: DeauthenticationFrame<'_>) {
         debug!(
             "Received deauthentication frame from {}, reason: {:?}.",
             deauth.header.transmitter_address, deauth.reason
         );
-        self.set_disconnected().await;
+        self.set_disconnected();
     }
     /// Handle a frame arriving on the background queue, during a connection.
-    async fn handle_bg_rx(&mut self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
+    fn handle_bg_rx(&mut self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
         let _ = match_frames! {
             buffer.mpdu_buffer(),
             deauth = DeauthenticationFrame => {
-                self.handle_deauth(deauth).await;
+                self.handle_deauth(deauth);
             }
             _beacon = BeaconFrame => {
                 beacon_timeout.reset();
@@ -148,7 +147,7 @@ impl ConnectionRunner<'_, '_> {
                         .wait_for_off_channel_completion()
                         .await;
                 }
-                Either4::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout).await,
+                Either4::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout),
                 Either4::Third(data) => {
                     Self::handle_data_tx(
                         data,
@@ -169,8 +168,7 @@ impl ConnectionRunner<'_, '_> {
                     )
                     .await;
                     self.connection_state
-                        .signal_state(ConnectionState::Disconnected)
-                        .await;
+                        .signal_state(ConnectionState::Disconnected);
                     self.interface_control.unlock_channel();
                     self.phy_rate.take();
                     debug!("Disconnected from BSS due to beacon timeout.");

@@ -210,7 +210,7 @@ impl StaControl<'_, '_> {
         Ok(())
     }
     /// Get the [AssociationID] of the current connection.
-    pub async fn get_aid(&self) -> Option<AssociationID> {
+    pub fn get_aid(&self) -> Option<AssociationID> {
         self.connection_state
             .connection_info()
             .map(|connection_info| connection_info.aid)
