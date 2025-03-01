@@ -1,6 +1,9 @@
 use core::marker::PhantomData;
 
-use foa::{esp_wifi_hal::TxParameters, LMacInterfaceControl};
+use foa::{
+    esp_wifi_hal::{TxParameters, WiFiRate},
+    LMacInterfaceControl,
+};
 use ieee80211::{
     common::{IEEE80211Reason, SequenceControl},
     element_chain,
@@ -8,12 +11,13 @@ use ieee80211::{
     scroll::Pwrite,
 };
 
-use crate::{ConnectionInfo, DEFAULT_PHY_RATE};
+use crate::ConnectionInfo;
 
 /// This will transmit a deauth frame to the AP, but not unlock the channel.
 pub async fn send_deauth(
     interface_control: &LMacInterfaceControl<'_>,
     connection_info: &ConnectionInfo,
+    phy_rate: WiFiRate,
 ) {
     let mut tx_buf = interface_control.alloc_tx_buf().await;
     let written = tx_buf
@@ -39,7 +43,7 @@ pub async fn send_deauth(
         .transmit(
             &mut tx_buf[..written],
             &TxParameters {
-                rate: DEFAULT_PHY_RATE,
+                rate: phy_rate,
                 ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
             },
             true,

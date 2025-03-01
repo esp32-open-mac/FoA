@@ -3,7 +3,7 @@ use core::{marker::PhantomData, mem};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
 use foa::{
-    esp_wifi_hal::{RxFilterBank, TxParameters, WiFiError},
+    esp_wifi_hal::{RxFilterBank, TxParameters, WiFiError, WiFiRate},
     LMacInterfaceControl, ReceivedFrame,
 };
 use ieee80211::{
@@ -26,7 +26,7 @@ use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
     rx_router::{Operation, RxQueue, RxRouter},
-    StaError, DEFAULT_PHY_RATE,
+    StaError,
 };
 
 /// Connecting to an AP.
@@ -43,6 +43,7 @@ impl ConnectionOperation<'_, '_> {
         bss: &BSS,
         timeout: Duration,
         mac_address: MACAddress,
+        phy_rate: WiFiRate,
     ) -> Result<(), StaError> {
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
@@ -73,7 +74,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit(
                 &mut tx_buffer[..written],
                 &TxParameters {
-                    rate: DEFAULT_PHY_RATE,
+                    rate: phy_rate,
                     ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
                 true,
@@ -112,6 +113,7 @@ impl ConnectionOperation<'_, '_> {
         bss: &BSS,
         timeout: Duration,
         mac_address: MACAddress,
+        phy_rate: WiFiRate,
     ) -> Result<AssociationID, StaError> {
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
@@ -145,7 +147,7 @@ impl ConnectionOperation<'_, '_> {
             .transmit(
                 &mut tx_buffer[..written],
                 &TxParameters {
-                    rate: DEFAULT_PHY_RATE,
+                    rate: phy_rate,
                     ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
                 true,
@@ -181,6 +183,7 @@ impl ConnectionOperation<'_, '_> {
         bss: &BSS,
         timeout: Duration,
         mac_address: MACAddress,
+        phy_rate: WiFiRate,
     ) -> Result<AssociationID, StaError> {
         debug!(
             "Connecting to {} on channel {} with MAC address {}.",
@@ -207,8 +210,8 @@ impl ConnectionOperation<'_, '_> {
         self.interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
 
-        self.do_auth(bss, timeout, mac_address).await?;
-        let aid = self.do_assoc(bss, timeout, mac_address).await?;
+        self.do_auth(bss, timeout, mac_address, phy_rate).await?;
+        let aid = self.do_assoc(bss, timeout, mac_address, phy_rate).await?;
 
         bringup_operation.complete();
 

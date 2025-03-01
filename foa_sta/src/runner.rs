@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use core::{cell::Cell, marker::PhantomData};
 
 use embassy_futures::{
     join::join,
@@ -13,7 +13,7 @@ use embassy_sync::{
 use embassy_time::{Duration, Ticker};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
-    esp_wifi_hal::{RxFilterBank, TxParameters},
+    esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
     LMacInterfaceControl, ReceivedFrame, RxQueueReceiver,
 };
 use ieee80211::{
@@ -29,7 +29,7 @@ use llc_rs::SnapLlcFrame;
 use crate::{
     operations::deauth::send_deauth,
     rx_router::{RxQueue, RxRouter},
-    ConnectionState, ConnectionStateTracker, DEFAULT_PHY_RATE, MTU,
+    ConnectionState, ConnectionStateTracker, MTU,
 };
 pub(crate) struct ConnectionRunner<'vif, 'foa> {
     // Low level RX/TX.
@@ -42,6 +42,7 @@ pub(crate) struct ConnectionRunner<'vif, 'foa> {
 
     // Connection management.
     pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) phy_rate: &'vif Cell<WiFiRate>,
 }
 impl ConnectionRunner<'_, '_> {
     /// Set the internal state to disconnected.
@@ -56,6 +57,7 @@ impl ConnectionRunner<'_, '_> {
         buffer: &[u8],
         interface_control: &LMacInterfaceControl<'_>,
         connection_state: &ConnectionStateTracker,
+        phy_rate: WiFiRate,
     ) {
         let Some(connection_info) = connection_state.connection_info() else {
             return;
@@ -89,7 +91,7 @@ impl ConnectionRunner<'_, '_> {
             .transmit(
                 &mut tx_buf[..written],
                 &TxParameters {
-                    rate: DEFAULT_PHY_RATE,
+                    rate: phy_rate,
                     ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                 },
                 true,
@@ -148,19 +150,29 @@ impl ConnectionRunner<'_, '_> {
                 }
                 Either4::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout).await,
                 Either4::Third(data) => {
-                    Self::handle_data_tx(data, self.interface_control, self.connection_state).await;
+                    Self::handle_data_tx(
+                        data,
+                        self.interface_control,
+                        self.connection_state,
+                        self.phy_rate.get(),
+                    )
+                    .await;
                     self.tx_runner.tx_done();
                 }
                 Either4::Fourth(_) => {
+                    // Since we assume the network either can't or barely hear us, we use the
+                    // lowest PHY rate.
                     send_deauth(
                         self.interface_control,
                         &self.connection_state.connection_info().unwrap(),
+                        WiFiRate::PhyRate1ML,
                     )
                     .await;
                     self.connection_state
                         .signal_state(ConnectionState::Disconnected)
                         .await;
                     self.interface_control.unlock_channel();
+                    self.phy_rate.take();
                     debug!("Disconnected from BSS due to beacon timeout.");
                 }
             }

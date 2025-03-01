@@ -1,6 +1,6 @@
 //! This module provides control over the STA interface.
 
-use core::str::FromStr;
+use core::{cell::Cell, str::FromStr};
 
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::Duration;
@@ -9,7 +9,7 @@ use ieee80211::{
     mgmt_frame::BeaconFrame, scroll::Pread,
 };
 
-use foa::{LMacInterfaceControl, ReceivedFrame};
+use foa::{esp_wifi_hal::WiFiRate, LMacInterfaceControl, ReceivedFrame};
 
 use crate::{
     operations::{
@@ -44,6 +44,7 @@ pub struct StaControl<'vif, 'foa> {
 
     // Connection management.
     pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) phy_rate: &'vif Cell<WiFiRate>,
 }
 impl StaControl<'_, '_> {
     /// Set the MAC address for the STA interface.
@@ -167,7 +168,12 @@ impl StaControl<'_, '_> {
             router_queue: RxQueue::User,
             interface_control: self.interface_control,
         }
-        .run(bss, timeout.unwrap_or(DEFAULT_TIMEOUT), self.mac_address)
+        .run(
+            bss,
+            timeout.unwrap_or(DEFAULT_TIMEOUT),
+            self.mac_address,
+            self.phy_rate.get(),
+        )
         .await?;
         self.connection_state
             .signal_state(ConnectionState::Connected(ConnectionInfo {
@@ -179,15 +185,27 @@ impl StaControl<'_, '_> {
         debug!("Successfully connected to {}", bss.bssid);
         Ok(())
     }
+    async fn disconnect_internal(&mut self, connection_info: ConnectionInfo) {
+        // NOTE: The channel is already unlocked here, but since there's no await-point between
+        // unlocking the channel and transmitting the deauth, no other interface could attempt to
+        // lock it before we're done here.
+        self.connection_state
+            .signal_state(ConnectionState::Disconnected);
+        send_deauth(
+            self.interface_control,
+            &connection_info,
+            self.phy_rate.get(),
+        )
+        .await;
+        self.phy_rate.take();
+    }
     /// Disconnect from the current network.
     pub async fn disconnect(&mut self) -> Result<(), StaError> {
         let Some(connection_info) = self.connection_state.connection_info() else {
             return Err(StaError::NotConnected);
         };
-        send_deauth(self.interface_control, &connection_info).await;
-        self.connection_state
-            .signal_state(ConnectionState::Disconnected)
-            .await;
+        self.interface_control.unlock_channel();
+        self.disconnect_internal(connection_info).await;
         debug!("Disconnected from {}", connection_info.bssid);
         Ok(())
     }
@@ -196,5 +214,13 @@ impl StaControl<'_, '_> {
         self.connection_state
             .connection_info()
             .map(|connection_info| connection_info.aid)
+    }
+    /// Get the currently used PHY rate.
+    pub fn phy_rate(&self) -> WiFiRate {
+        self.phy_rate.get()
+    }
+    /// Override the PHY rate.
+    pub fn override_phy_rate(&self, phy_rate: WiFiRate) {
+        self.phy_rate.set(phy_rate);
     }
 }

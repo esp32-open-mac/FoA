@@ -19,7 +19,7 @@
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
 use embassy_net::driver::HardwareAddress;
 use embassy_sync::{
@@ -76,7 +76,6 @@ pub enum StaError {
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub const MTU: usize = 1514;
-pub(crate) const DEFAULT_PHY_RATE: WiFiRate = WiFiRate::PhyRate1ML;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Information about the current connection.
@@ -108,7 +107,7 @@ impl ConnectionStateTracker {
         }
     }
     /// Signal a new state.
-    pub async fn signal_state(&self, new_state: ConnectionState) {
+    pub fn signal_state(&self, new_state: ConnectionState) {
         self.connection_state
             .lock(|rc| *rc.borrow_mut() = new_state);
         self.connection_state_signal.signal(());
@@ -155,6 +154,7 @@ pub struct StaResources<'foa> {
 
     // State tracking.
     connection_state: ConnectionStateTracker,
+    phy_rate: Cell<WiFiRate>,
 }
 impl StaResources<'_> {
     pub const fn new() -> Self {
@@ -164,6 +164,7 @@ impl StaResources<'_> {
             user_queue: Channel::new(),
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
+            phy_rate: Cell::new(WiFiRate::PhyRate1ML),
         }
     }
 }
@@ -199,6 +200,7 @@ pub fn new_sta_interface<'vif, 'foa>(
             connection_state: &resources.connection_state,
             rx_queue: &resources.user_queue,
             rx_router: &resources.rx_router,
+            phy_rate: &resources.phy_rate,
         },
         StaRunner {
             connection_runner: ConnectionRunner {
@@ -207,6 +209,7 @@ pub fn new_sta_interface<'vif, 'foa>(
                 tx_runner,
                 state_runner,
                 connection_state: &resources.connection_state,
+                phy_rate: &resources.phy_rate,
             },
             routing_runner: RoutingRunner {
                 connection_state: &resources.connection_state,
