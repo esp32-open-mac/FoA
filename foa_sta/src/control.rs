@@ -161,7 +161,17 @@ impl StaControl<'_, '_> {
         self.connection_state.connection_info().is_some()
     }
     /// Connect to a network.
+    ///
+    /// If we're already connected to a network, this will disconnect from that network, before
+    /// establishing a connection to the new network.
     pub async fn connect(&mut self, bss: &BSS, timeout: Option<Duration>) -> Result<(), StaError> {
+        if let Some(connection_info) = self.connection_state.connection_info() {
+            if connection_info.bssid == bss.bssid {
+                return Err(StaError::SameNetwork);
+            }
+            debug!("Disconnecting from {}.", connection_info.bssid);
+            self.disconnect_internal(connection_info).await;
+        }
         let aid = ConnectionOperation {
             rx_router: self.rx_router,
             rx_queue: self.rx_queue,
@@ -180,8 +190,7 @@ impl StaControl<'_, '_> {
                 bssid: bss.bssid,
                 own_address: self.mac_address,
                 aid,
-            }))
-            .await;
+            }));
         debug!("Successfully connected to {}", bss.bssid);
         Ok(())
     }

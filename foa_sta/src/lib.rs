@@ -71,6 +71,8 @@ pub enum StaError {
     StillConnected,
     /// The status of a connection couldn't be changed, because none was established.
     NotConnected,
+    /// The network, too which a connection was requested, is the same as the current one.
+    SameNetwork,
 }
 
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
