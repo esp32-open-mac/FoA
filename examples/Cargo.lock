@@ -817,7 +817,6 @@ dependencies = [
  "foa",
  "foa_sta",
  "heapless 0.8.0",
- "log",
  "rand_core",
  "reqwless",
  "static_cell",
