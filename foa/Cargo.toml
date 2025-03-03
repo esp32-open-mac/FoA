@@ -14,6 +14,7 @@ critical-section = "1.2.0"
 portable-atomic = "1.10.0"
 esp-config= "0.3.0"
 defmt-or-log = { version = "0.2.1", default-features = false }
+defmt = { version = "0.3.10", optional = true }
 
 [build-dependencies]
 esp-config = { version = "0.3.0", features = ["build"] }
@@ -23,7 +24,7 @@ clear_tx_buffers = []
 arc_buffers = []
 
 log = ["defmt-or-log/log"]
-defmt = ["defmt-or-log/log", "esp-wifi-hal/defmt"]
+defmt = ["dep:defmt", "defmt-or-log/defmt", "esp-wifi-hal/defmt"]
 
 esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-wifi-hal/esp32s2"]

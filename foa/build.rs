@@ -5,12 +5,6 @@ fn main() {
         "foa",
         &[
             (
-                "rx_buffer_size",
-                "Size of an RX buffer",
-                Value::Integer(1600),
-                Some(Validator::PositiveInteger),
-            ),
-            (
                 "rx_buffer_count",
                 "Amount of RX buffers",
                 Value::Integer(10),

@@ -59,7 +59,6 @@ use rx_arc_pool::RxArcPool;
 use tx_buffer_management::TxBufferManager;
 
 const RX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_COUNT");
-const RX_BUFFER_SIZE: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_SIZE");
 const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_CONFIG_RX_QUEUE_LEN");
 const TX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_COUNT");
 const TX_BUFFER_SIZE: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_SIZE");
@@ -74,7 +73,7 @@ pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
 
 /// The resources required by the WiFi stack.
 pub struct FoAResources {
-    dma_resources: DMAResources<RX_BUFFER_SIZE, RX_BUFFER_COUNT>,
+    dma_resources: DMAResources<RX_BUFFER_COUNT>,
     #[cfg(feature = "arc_buffers")]
     arc_pool: RxArcPool,
     tx_buffers: [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
