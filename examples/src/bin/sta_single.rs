@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use defmt_or_log::info;
+use defmt::info;
 use embassy_executor::Spawner;
 use embassy_net::{
     dns::{DnsQueryType, DnsSocket},
@@ -46,9 +46,6 @@ async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> 
 async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    #[cfg(feature = "log")]
-    esp_println::logger::init_logger_from_env();
-
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
 
@@ -72,6 +69,7 @@ async fn main(spawner: Spawner) {
     let mut mac_address = [0u8; 6];
     Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
     sta_control.set_mac_address(mac_address).await.unwrap();
+    info!("Using MAC address: {:#x}", mac_address);
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
     let (net_stack, net_runner) = embassy_net::new(
@@ -82,10 +80,8 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    let bss = sta_control.find_ess(None, SSID).await.unwrap();
-
-    // sta_control.set_mac_address(mac_address).await.unwrap();
-    sta_control.connect(&bss, None).await.unwrap();
+    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);
+    info!("Connected successfully.");
 
     // Wait for DHCP, not necessary when using static IP
     info!("waiting for DHCP...");

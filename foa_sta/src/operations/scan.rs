@@ -7,27 +7,33 @@ use crate::{
     StaError,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ScanStrategy<'a> {
+    Single(u8),
+    CurrentChannel,
+    Linear,
+    #[default]
+    NonOverlappingFirst,
+    Custom(&'a [u8]),
+}
+
 /// Configuration for a scan.
 ///
 /// This allows configuring how the scan is performed and on which channels.
 pub struct ScanConfig<'a> {
     /// The time we should remain on one channel, before jumping to the next one.
+    ///
+    /// The default is 200 ms. It is not recommended, to go below 100 ms, since that's the beacon
+    /// interval of almost every network.
     pub channel_remain_time: Duration,
-    /// The channels to be scanned. Leaving this set to [None], will mean all channels will be
-    /// scanned.
-    pub channels: Option<&'a [u8]>,
-}
-impl ScanConfig<'_> {
-    fn get_channels(&self) -> &[u8] {
-        self.channels
-            .unwrap_or(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
-    }
+    /// The strategy, that should be used to scan channels.
+    pub strategy: ScanStrategy<'a>,
 }
 impl Default for ScanConfig<'_> {
     fn default() -> Self {
         Self {
             channel_remain_time: Duration::from_millis(200),
-            channels: None,
+            strategy: ScanStrategy::default(),
         }
     }
 }
@@ -61,10 +67,16 @@ impl ScanOperation<'_, '_> {
 
         // We get the scan configuration.
         let scan_config = scan_config.unwrap_or_default();
-        debug!(
-            "ESS scan started. Scanning channels: {:?}",
-            scan_config.get_channels()
-        );
+        let channels = match scan_config.strategy {
+            ScanStrategy::Single(channel) => &[channel],
+            ScanStrategy::CurrentChannel => &[self.interface_control.get_current_channel()],
+            ScanStrategy::Linear => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
+            ScanStrategy::NonOverlappingFirst => {
+                [1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13].as_slice()
+            }
+            ScanStrategy::Custom(channels) => channels,
+        };
+        debug!("ESS scan started. Scanning channels: {:?}", channels);
         // Setup scanning mode.
         self.rx_router
             .begin_operation(self.router_queue, Operation::Scanning)
@@ -73,7 +85,7 @@ impl ScanOperation<'_, '_> {
         self.rx_queue.clear();
 
         // Loop through channels.
-        for channel in scan_config.get_channels() {
+        for channel in channels {
             off_channel_operation
                 .set_channel(*channel)
                 .map_err(StaError::LMacError)?;

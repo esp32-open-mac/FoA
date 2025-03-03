@@ -2,7 +2,7 @@ use core::{cell::Cell, marker::PhantomData};
 
 use embassy_futures::{
     join::join,
-    select::{select, select4, Either4},
+    select::{select3, Either3},
 };
 use embassy_net::driver::{HardwareAddress, LinkState};
 use embassy_net_driver_channel::{RxRunner, StateRunner, TxRunner};
@@ -37,7 +37,7 @@ pub(crate) struct ConnectionRunner<'vif, 'foa> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
 
     // Upper layer control.
-    pub(crate) tx_runner: TxRunner<'vif, MTU>,
+    pub(crate) tx_runner: Option<TxRunner<'vif, MTU>>,
     pub(crate) state_runner: StateRunner<'vif>,
 
     // Connection management.
@@ -50,6 +50,69 @@ impl ConnectionRunner<'_, '_> {
         self.interface_control.unlock_channel();
         self.connection_state
             .signal_state(ConnectionState::Disconnected);
+    }
+    /// Handle a deauth frame.
+    ///
+    /// NOTE: Currently this immediately leads to disconnection.
+    fn handle_deauth(&self, deauth: DeauthenticationFrame<'_>) {
+        debug!(
+            "Received deauthentication frame from {}, reason: {:?}.",
+            deauth.header.transmitter_address, deauth.reason
+        );
+        self.set_disconnected();
+    }
+    /// Handle a frame arriving on the background queue, during a connection.
+    fn handle_bg_rx(&self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
+        let _ = match_frames! {
+            buffer.mpdu_buffer(),
+            deauth = DeauthenticationFrame => {
+                self.handle_deauth(deauth);
+            }
+            _beacon = BeaconFrame => {
+                beacon_timeout.reset();
+            }
+        };
+    }
+    /// Run the background task, while connected.
+    async fn run_connection(&self) -> ! {
+        let mut beacon_timeout = Ticker::every(Duration::from_secs(3));
+        loop {
+            // We wait for one of three things to happen.
+            // 1. An off channel request arrives, which we grant immediately and wait for its
+            //    completion.
+            // 2. A frame to arrive from the background queue.
+            // 3. A beacon timeout to occur.
+            match select3(
+                self.interface_control.wait_for_off_channel_request(),
+                self.bg_rx_queue.receive(),
+                beacon_timeout.next(),
+            )
+            .await
+            {
+                Either3::First(off_channel_request) => {
+                    off_channel_request.grant();
+                    self.interface_control
+                        .wait_for_off_channel_completion()
+                        .await;
+                }
+                Either3::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout),
+                Either3::Third(_) => {
+                    // Since we assume the network either can't or barely hear us, we use the
+                    // lowest PHY rate.
+                    send_deauth(
+                        self.interface_control,
+                        &self.connection_state.connection_info().unwrap(),
+                        WiFiRate::PhyRate1ML,
+                    )
+                    .await;
+                    self.connection_state
+                        .signal_state(ConnectionState::Disconnected);
+                    self.interface_control.unlock_channel();
+                    self.phy_rate.take();
+                    debug!("Disconnected from BSS due to beacon timeout.");
+                }
+            }
+        }
     }
     /// Transmit a data frame to the AP.
     async fn handle_data_tx(
@@ -102,81 +165,22 @@ impl ConnectionRunner<'_, '_> {
             ethernet_frame.header.dst
         );
     }
-    /// Handle a deauth frame.
-    ///
-    /// NOTE: Currently this immediately leads to disconnection.
-    fn handle_deauth(&mut self, deauth: DeauthenticationFrame<'_>) {
-        debug!(
-            "Received deauthentication frame from {}, reason: {:?}.",
-            deauth.header.transmitter_address, deauth.reason
-        );
-        self.set_disconnected();
-    }
-    /// Handle a frame arriving on the background queue, during a connection.
-    fn handle_bg_rx(&mut self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
-        let _ = match_frames! {
-            buffer.mpdu_buffer(),
-            deauth = DeauthenticationFrame => {
-                self.handle_deauth(deauth);
-            }
-            _beacon = BeaconFrame => {
-                beacon_timeout.reset();
-            }
-        };
-    }
-    /// Run the background task, while connected.
-    async fn run_connection(&mut self) -> ! {
-        let mut beacon_timeout = Ticker::every(Duration::from_secs(3));
+    /// Handle the tranmsission of MSDUs.
+    async fn run_msdu_tx(
+        tx_runner: &mut TxRunner<'_, MTU>,
+        interface_control: &LMacInterfaceControl<'_>,
+        connection_state: &ConnectionStateTracker,
+        phy_rate: &Cell<WiFiRate>,
+    ) -> ! {
         loop {
-            // We wait for one of three things to happen.
-            // 1. An off channel request arrives, which we grant immediately and wait for its
-            //    completion.
-            // 2. A frame to arrive from the background queue.
-            // 3. A frame arriving for TX.
-            match select4(
-                self.interface_control.wait_for_off_channel_request(),
-                self.bg_rx_queue.receive(),
-                self.tx_runner.tx_buf(),
-                beacon_timeout.next(),
-            )
-            .await
-            {
-                Either4::First(off_channel_request) => {
-                    off_channel_request.grant();
-                    self.interface_control
-                        .wait_for_off_channel_completion()
-                        .await;
-                }
-                Either4::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout),
-                Either4::Third(data) => {
-                    Self::handle_data_tx(
-                        data,
-                        self.interface_control,
-                        self.connection_state,
-                        self.phy_rate.get(),
-                    )
-                    .await;
-                    self.tx_runner.tx_done();
-                }
-                Either4::Fourth(_) => {
-                    // Since we assume the network either can't or barely hear us, we use the
-                    // lowest PHY rate.
-                    send_deauth(
-                        self.interface_control,
-                        &self.connection_state.connection_info().unwrap(),
-                        WiFiRate::PhyRate1ML,
-                    )
-                    .await;
-                    self.connection_state
-                        .signal_state(ConnectionState::Disconnected);
-                    self.interface_control.unlock_channel();
-                    self.phy_rate.take();
-                    debug!("Disconnected from BSS due to beacon timeout.");
-                }
-            }
+            let tx_buf = tx_runner.tx_buf().await;
+            Self::handle_data_tx(tx_buf, interface_control, connection_state, phy_rate.get()).await;
+            tx_runner.tx_done();
         }
     }
+    /// Run all actual background operations.
     async fn run(&mut self) -> ! {
+        let mut tx_runner = self.tx_runner.take().unwrap();
         loop {
             let connection_info = self.connection_state.wait_for_connection().await;
             self.state_runner
@@ -187,9 +191,15 @@ impl ConnectionRunner<'_, '_> {
             // requests, while we're connected.
 
             // Run the connection, until we're disconnected.
-            select(
+            select3(
                 self.connection_state.wait_for_disconnection(),
                 self.run_connection(),
+                Self::run_msdu_tx(
+                    &mut tx_runner,
+                    self.interface_control,
+                    self.connection_state,
+                    self.phy_rate,
+                ),
             )
             .await;
 

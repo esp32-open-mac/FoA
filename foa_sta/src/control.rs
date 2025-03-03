@@ -194,6 +194,14 @@ impl StaControl<'_, '_> {
         debug!("Successfully connected to {}", bss.bssid);
         Ok(())
     }
+    pub async fn connect_by_ssid(
+        &mut self,
+        ssid: &str,
+        timeout: Option<Duration>,
+    ) -> Result<(), StaError> {
+        let bss = self.find_ess(None, ssid).await?;
+        self.connect(&bss, timeout).await
+    }
     async fn disconnect_internal(&mut self, connection_info: ConnectionInfo) {
         // NOTE: The channel is already unlocked here, but since there's no await-point between
         // unlocking the channel and transmitting the deauth, no other interface could attempt to

@@ -54,6 +54,7 @@ impl ConnectionOperation<'_, '_> {
                         bssid: bss.bssid,
                         transmitter_address: mac_address,
                         sequence_control: SequenceControl::new(),
+                        duration: 60,
                         ..Default::default()
                     },
                     body: AuthenticationBody {
@@ -124,6 +125,7 @@ impl ConnectionOperation<'_, '_> {
                         bssid: bss.bssid,
                         transmitter_address: mac_address,
                         sequence_control: SequenceControl::new(),
+                        duration: 60,
                         ..Default::default()
                     },
                     body: AssociationRequestBody {

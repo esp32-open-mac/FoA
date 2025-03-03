@@ -50,6 +50,7 @@ pub use operations::scan::ScanConfig;
 use rx_router::RxRouter;
 mod rx_router;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Errors than can occur, during STA operation.
 pub enum StaError {
@@ -208,7 +209,7 @@ pub fn new_sta_interface<'vif, 'foa>(
             connection_runner: ConnectionRunner {
                 bg_rx_queue: &resources.bg_queue,
                 interface_control,
-                tx_runner,
+                tx_runner: Some(tx_runner),
                 state_runner,
                 connection_state: &resources.connection_state,
                 phy_rate: &resources.phy_rate,
