@@ -3,7 +3,7 @@ use embassy_time::{with_timeout, Duration};
 use foa::{esp_wifi_hal::ScanningMode, LMacInterfaceControl, ReceivedFrame};
 
 use crate::{
-    rx_router::{Operation, RxQueue, RxRouter},
+    rx_router::{Operation, RouterQueue, RxRouter},
     StaError,
 };
 
@@ -44,7 +44,7 @@ impl Default for ScanConfig<'_> {
 pub(crate) struct ScanOperation<'a, 'res> {
     pub(crate) rx_router: &'a RxRouter,
     pub(crate) rx_queue: &'a Channel<NoopRawMutex, ReceivedFrame<'res>, 4>,
-    pub(crate) router_queue: RxQueue,
+    pub(crate) router_queue: RouterQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
 }
 impl ScanOperation<'_, '_> {
@@ -78,8 +78,9 @@ impl ScanOperation<'_, '_> {
         };
         debug!("ESS scan started. Scanning channels: {:?}", channels);
         // Setup scanning mode.
-        self.rx_router
-            .begin_operation(self.router_queue, Operation::Scanning)
+        let router_operation = self
+            .rx_router
+            .begin_scoped_operation(self.router_queue, Operation::Scanning)
             .await;
         off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
         self.rx_queue.clear();
@@ -106,12 +107,8 @@ impl ScanOperation<'_, '_> {
         }
 
         debug!("ESS scan complete.");
+        router_operation.complete();
 
         Ok(())
-    }
-}
-impl Drop for ScanOperation<'_, '_> {
-    fn drop(&mut self) {
-        self.rx_router.end_operation(self.router_queue);
     }
 }

@@ -28,7 +28,7 @@ use llc_rs::SnapLlcFrame;
 
 use crate::{
     operations::deauth::send_deauth,
-    rx_router::{RxQueue, RxRouter},
+    rx_router::{RouterQueue, RxRouter},
     ConnectionState, ConnectionStateTracker, MTU,
 };
 pub(crate) struct ConnectionRunner<'vif, 'foa> {
@@ -74,7 +74,7 @@ impl ConnectionRunner<'_, '_> {
         };
     }
     /// Run the background task, while connected.
-    async fn run_connection(&self) -> ! {
+    async fn run_connection(&self) {
         let mut beacon_timeout = Ticker::every(Duration::from_secs(3));
         loop {
             // We wait for one of three things to happen.
@@ -110,6 +110,7 @@ impl ConnectionRunner<'_, '_> {
                     self.interface_control.unlock_channel();
                     self.phy_rate.take();
                     debug!("Disconnected from BSS due to beacon timeout.");
+                    return;
                 }
             }
         }
@@ -206,7 +207,6 @@ impl ConnectionRunner<'_, '_> {
             // We reset all connection specific parameters here.
             self.interface_control
                 .set_filter_status(RxFilterBank::BSSID, false);
-            self.interface_control.unlock_channel();
             self.state_runner.set_link_state(LinkState::Down);
             debug!("Link went down.");
         }
@@ -306,8 +306,8 @@ impl RoutingRunner<'_, '_> {
             } else {
                 // We ask the RX router, where all other frames should go.
                 let _ = match self.rx_router.target_queue_for_frame(&generic_frame) {
-                    RxQueue::User => &self.user_queue_sender,
-                    RxQueue::Background => &self.bg_queue_sender,
+                    RouterQueue::User => &self.user_queue_sender,
+                    RouterQueue::Background => &self.bg_queue_sender,
                 }
                 .try_send(borrowed_buffer);
             }

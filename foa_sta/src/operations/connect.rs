@@ -25,7 +25,7 @@ use ieee80211::{
 use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rx_router::{Operation, RxQueue, RxRouter},
+    rx_router::{Operation, RouterQueue, RxRouter},
     StaError,
 };
 
@@ -33,10 +33,13 @@ use crate::{
 pub struct ConnectionOperation<'a, 'res> {
     pub(crate) rx_router: &'a RxRouter,
     pub(crate) rx_queue: &'a Channel<NoopRawMutex, ReceivedFrame<'res>, 4>,
-    pub(crate) router_queue: RxQueue,
+    pub(crate) router_queue: RouterQueue,
     pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
 }
 impl ConnectionOperation<'_, '_> {
+    fn defuse(self) {
+        mem::forget(self);
+    }
     /// Authenticate with the BSS.
     async fn do_auth(
         &self,
@@ -195,8 +198,9 @@ impl ConnectionOperation<'_, '_> {
             .interface_control
             .begin_interface_bringup_operation(bss.channel)
             .map_err(StaError::LMacError)?;
-        self.rx_router
-            .begin_operation(self.router_queue, Operation::Connecting(mac_address))
+        let operation = self
+            .rx_router
+            .begin_scoped_operation(self.router_queue, Operation::Connecting(mac_address))
             .await;
 
         // Just to make sure, these are set for connection.
@@ -216,11 +220,9 @@ impl ConnectionOperation<'_, '_> {
         let aid = self.do_assoc(bss, timeout, mac_address, phy_rate).await?;
 
         bringup_operation.complete();
+        operation.complete();
 
-        self.rx_router.end_operation(self.router_queue);
-
-        // Since we disable the filters in the Drop implementation, we don't want to run it here.
-        mem::forget(self);
+        self.defuse();
 
         Ok(aid)
     }

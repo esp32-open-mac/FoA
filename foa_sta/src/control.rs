@@ -17,7 +17,7 @@ use crate::{
         deauth::send_deauth,
         scan::{ScanConfig, ScanOperation},
     },
-    rx_router::{RxQueue, RxRouter},
+    rx_router::{RouterQueue, RxRouter},
     ConnectionInfo, ConnectionStateTracker,
 };
 
@@ -69,7 +69,7 @@ impl StaControl<'_, '_> {
         ScanOperation {
             rx_router: self.rx_router,
             rx_queue: self.rx_queue,
-            router_queue: RxQueue::User,
+            router_queue: RouterQueue::User,
             interface_control: self.interface_control,
         }
         .run(scan_config, |received| {
@@ -119,7 +119,7 @@ impl StaControl<'_, '_> {
         ScanOperation {
             rx_router: self.rx_router,
             rx_queue: self.rx_queue,
-            router_queue: RxQueue::User,
+            router_queue: RouterQueue::User,
             interface_control: self.interface_control,
         }
         .run(scan_config, |received| {
@@ -175,7 +175,7 @@ impl StaControl<'_, '_> {
         let aid = ConnectionOperation {
             rx_router: self.rx_router,
             rx_queue: self.rx_queue,
-            router_queue: RxQueue::User,
+            router_queue: RouterQueue::User,
             interface_control: self.interface_control,
         }
         .run(
