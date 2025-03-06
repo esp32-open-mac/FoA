@@ -25,16 +25,15 @@ use ieee80211::{
 use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rx_router::{Operation, RouterQueue, RxRouter},
-    StaError,
+    rx_router::{Operation, RouterQueue},
+    StaError, StaTxRx,
 };
 
 /// Connecting to an AP.
-pub struct ConnectionOperation<'a, 'res> {
-    pub(crate) rx_router: &'a RxRouter,
-    pub(crate) rx_queue: &'a Channel<NoopRawMutex, ReceivedFrame<'res>, 4>,
+pub struct ConnectionOperation<'foa, 'vif> {
+    pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
+    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
     pub(crate) router_queue: RouterQueue,
-    pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
 }
 impl ConnectionOperation<'_, '_> {
     fn defuse(self) {
@@ -48,7 +47,7 @@ impl ConnectionOperation<'_, '_> {
         mac_address: MACAddress,
         phy_rate: WiFiRate,
     ) -> Result<(), StaError> {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
                 AuthenticationFrame {
@@ -74,6 +73,7 @@ impl ConnectionOperation<'_, '_> {
             )
             .unwrap();
         let res = self
+            .sta_tx_rx
             .interface_control
             .transmit(
                 &mut tx_buffer[..written],
@@ -119,7 +119,7 @@ impl ConnectionOperation<'_, '_> {
         mac_address: MACAddress,
         phy_rate: WiFiRate,
     ) -> Result<AssociationID, StaError> {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite_with(
                 AssociationRequestFrame {
@@ -148,6 +148,7 @@ impl ConnectionOperation<'_, '_> {
             .unwrap();
 
         let _ = self
+            .sta_tx_rx
             .interface_control
             .transmit(
                 &mut tx_buffer[..written],
@@ -195,25 +196,32 @@ impl ConnectionOperation<'_, '_> {
             bss.bssid, bss.channel, mac_address
         );
         let bringup_operation = self
+            .sta_tx_rx
             .interface_control
             .begin_interface_bringup_operation(bss.channel)
             .map_err(StaError::LMacError)?;
         let operation = self
+            .sta_tx_rx
             .rx_router
             .begin_scoped_operation(self.router_queue, Operation::Connecting(mac_address))
             .await;
 
         // Just to make sure, these are set for connection.
-        self.interface_control.set_filter_parameters(
+        self.sta_tx_rx.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
             *mac_address,
             None,
         );
-        self.interface_control
+        self.sta_tx_rx
+            .interface_control
             .set_filter_status(RxFilterBank::ReceiverAddress, true);
-        self.interface_control
-            .set_filter_parameters(RxFilterBank::BSSID, *bss.bssid, None);
-        self.interface_control
+        self.sta_tx_rx.interface_control.set_filter_parameters(
+            RxFilterBank::BSSID,
+            *bss.bssid,
+            None,
+        );
+        self.sta_tx_rx
+            .interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
 
         self.do_auth(bss, timeout, mac_address, phy_rate).await?;
@@ -229,10 +237,11 @@ impl ConnectionOperation<'_, '_> {
 }
 impl Drop for ConnectionOperation<'_, '_> {
     fn drop(&mut self) {
-        self.rx_router.end_operation(self.router_queue);
-        self.interface_control
+        self.sta_tx_rx
+            .interface_control
             .set_filter_status(RxFilterBank::ReceiverAddress, false);
-        self.interface_control
+        self.sta_tx_rx
+            .interface_control
             .set_filter_status(RxFilterBank::BSSID, false);
     }
 }

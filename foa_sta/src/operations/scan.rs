@@ -1,10 +1,10 @@
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
-use foa::{esp_wifi_hal::ScanningMode, LMacInterfaceControl, ReceivedFrame};
+use foa::{esp_wifi_hal::ScanningMode, ReceivedFrame};
 
 use crate::{
-    rx_router::{Operation, RouterQueue, RxRouter},
-    StaError,
+    rx_router::{Operation, RouterQueue},
+    StaError, StaTxRx,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -37,78 +37,66 @@ impl Default for ScanConfig<'_> {
         }
     }
 }
-/// Scan for ESS's.
+/// Scan for ESS's, with the specified [ScanConfig].
 ///
-/// This is it's own struct, to have easier cancel safety, since we can implement drop directly on
-/// this, which will restore everything to it's original state.
-pub(crate) struct ScanOperation<'a, 'res> {
-    pub(crate) rx_router: &'a RxRouter,
-    pub(crate) rx_queue: &'a Channel<NoopRawMutex, ReceivedFrame<'res>, 4>,
-    pub(crate) router_queue: RouterQueue,
-    pub(crate) interface_control: &'a LMacInterfaceControl<'res>,
-}
-impl ScanOperation<'_, '_> {
-    /// Scan for ESS's, with the specified [ScanConfig].
-    ///
-    /// If a beacon frame is received, the [BorrowedBuffer] is passed to `beacon_rx_cb`. If that
-    /// returns `false`, we end the scan. This can be used to implement searching for a specific
-    /// ESS and stopping once it's found.
-    pub async fn run(
-        self,
-        scan_config: Option<ScanConfig<'_>>,
-        mut beacon_rx_cb: impl FnMut(ReceivedFrame<'_>) -> bool,
-    ) -> Result<(), StaError> {
-        // We begin the off channe operation.
-        let mut off_channel_operation = self
-            .interface_control
-            .begin_interface_off_channel_operation()
-            .await
+/// If a beacon frame is received, the [BorrowedBuffer] is passed to `beacon_rx_cb`. If that
+/// returns `false`, we end the scan. This can be used to implement searching for a specific
+/// ESS and stopping once it's found.
+pub async fn scan(
+    sta_tx_rx: &StaTxRx<'_, '_>,
+    rx_queue: &Channel<NoopRawMutex, ReceivedFrame<'_>, 4>,
+    router_queue: RouterQueue,
+    scan_config: Option<ScanConfig<'_>>,
+    mut beacon_rx_cb: impl FnMut(ReceivedFrame<'_>) -> bool,
+) -> Result<(), StaError> {
+    // We begin the off channe operation.
+    let mut off_channel_operation = sta_tx_rx
+        .interface_control
+        .begin_interface_off_channel_operation()
+        .await
+        .map_err(StaError::LMacError)?;
+
+    // We get the scan configuration.
+    let scan_config = scan_config.unwrap_or_default();
+    let channels = match scan_config.strategy {
+        ScanStrategy::Single(channel) => &[channel],
+        ScanStrategy::CurrentChannel => &[sta_tx_rx.interface_control.get_current_channel()],
+        ScanStrategy::Linear => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
+        ScanStrategy::NonOverlappingFirst => [1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13].as_slice(),
+        ScanStrategy::Custom(channels) => channels,
+    };
+    debug!("ESS scan started. Scanning channels: {:?}", channels);
+    // Setup scanning mode.
+    let router_operation = sta_tx_rx
+        .rx_router
+        .begin_scoped_operation(router_queue, Operation::Scanning)
+        .await;
+    off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
+    rx_queue.clear();
+
+    // Loop through channels.
+    for channel in channels {
+        off_channel_operation
+            .set_channel(*channel)
             .map_err(StaError::LMacError)?;
-
-        // We get the scan configuration.
-        let scan_config = scan_config.unwrap_or_default();
-        let channels = match scan_config.strategy {
-            ScanStrategy::Single(channel) => &[channel],
-            ScanStrategy::CurrentChannel => &[self.interface_control.get_current_channel()],
-            ScanStrategy::Linear => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
-            ScanStrategy::NonOverlappingFirst => {
-                [1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13].as_slice()
-            }
-            ScanStrategy::Custom(channels) => channels,
-        };
-        debug!("ESS scan started. Scanning channels: {:?}", channels);
-        // Setup scanning mode.
-        let router_operation = self
-            .rx_router
-            .begin_scoped_operation(self.router_queue, Operation::Scanning)
-            .await;
-        off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
-        self.rx_queue.clear();
-
-        // Loop through channels.
-        for channel in channels {
-            off_channel_operation
-                .set_channel(*channel)
-                .map_err(StaError::LMacError)?;
-            // Receive on the channel, until the channel remain time is over.
-            if with_timeout(scan_config.channel_remain_time, async {
-                loop {
-                    // If beacon_rx_cb returns false, we break.
-                    if !beacon_rx_cb(self.rx_queue.receive().await) {
-                        break;
-                    }
+        // Receive on the channel, until the channel remain time is over.
+        if with_timeout(scan_config.channel_remain_time, async {
+            loop {
+                // If beacon_rx_cb returns false, we break.
+                if !beacon_rx_cb(rx_queue.receive().await) {
+                    break;
                 }
-            })
-            .await
-            .is_ok()
-            {
-                break;
             }
+        })
+        .await
+        .is_ok()
+        {
+            break;
         }
-
-        debug!("ESS scan complete.");
-        router_operation.complete();
-
-        Ok(())
     }
+
+    debug!("ESS scan complete.");
+    router_operation.complete();
+
+    Ok(())
 }

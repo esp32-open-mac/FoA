@@ -34,7 +34,9 @@ use ieee80211::{
 };
 
 use embassy_net_driver_channel::{self as ch};
-use foa::{esp_wifi_hal::WiFiRate, LMacError, ReceivedFrame, VirtualInterface};
+use foa::{
+    esp_wifi_hal::WiFiRate, LMacError, LMacInterfaceControl, ReceivedFrame, VirtualInterface,
+};
 
 #[macro_use]
 extern crate defmt_or_log;
@@ -145,6 +147,21 @@ impl ConnectionStateTracker {
     }
 }
 
+#[derive(Clone)]
+/// TX and RX resources for the interface control and runner.
+pub(crate) struct StaTxRx<'foa, 'vif> {
+    pub(crate) rx_router: &'vif RxRouter,
+    pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
+    pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) phy_rate: &'vif Cell<WiFiRate>,
+}
+impl StaTxRx<'_, '_> {
+    /// Reset the PHY rate.
+    pub fn reset_phy_rate(&self) {
+        self.phy_rate.take();
+    }
+}
+
 /// Shared resources for the STA interface.
 pub struct StaResources<'foa> {
     // RX routing.
@@ -158,6 +175,9 @@ pub struct StaResources<'foa> {
     // State tracking.
     connection_state: ConnectionStateTracker,
     phy_rate: Cell<WiFiRate>,
+
+    // Misc.
+    sta_tx_rx: Option<StaTxRx<'static, 'static>>,
 }
 impl StaResources<'_> {
     pub const fn new() -> Self {
@@ -168,6 +188,7 @@ impl StaResources<'_> {
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
             phy_rate: Cell::new(WiFiRate::PhyRate1ML),
+            sta_tx_rx: None,
         }
     }
 }
@@ -179,13 +200,14 @@ impl Default for StaResources<'_> {
 
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
-pub fn new_sta_interface<'vif, 'foa>(
+/// Initialize a new STA interface.
+pub fn new_sta_interface<'foa: 'vif, 'vif>(
     virtual_interface: &'vif mut VirtualInterface<'foa>,
     resources: &'vif mut StaResources<'foa>,
     mac_address: Option<[u8; 6]>,
 ) -> (
-    StaControl<'vif, 'foa>,
-    StaRunner<'vif, 'foa>,
+    StaControl<'foa, 'vif>,
+    StaRunner<'foa, 'vif>,
     StaNetDevice<'vif>,
 ) {
     let (interface_control, interface_rx_queue) = virtual_interface.split();
@@ -195,30 +217,40 @@ pub fn new_sta_interface<'vif, 'foa>(
         &mut resources.channel_state,
         HardwareAddress::Ethernet(mac_address),
     );
+    // This is done to prevent all sorts of weirdness with self referential structs.
+    // SAFETY:
+    // Both 'foa and 'vif are shorter lifetimes, than static, and due to StaTxRx only refering to
+    // fields that are in StaResources, which has the lifetime 'vif, this is safe.
+    let sta_tx_rx = unsafe {
+        core::mem::transmute::<
+            &'vif mut Option<StaTxRx<'static, 'static>>,
+            &'vif mut Option<StaTxRx<'foa, 'vif>>,
+        >(&mut resources.sta_tx_rx)
+    }
+    .insert(StaTxRx {
+        rx_router: &resources.rx_router,
+        interface_control,
+        connection_state: &resources.connection_state,
+        phy_rate: &resources.phy_rate,
+    });
     let (state_runner, rx_runner, tx_runner) = net_runner.split();
     (
         StaControl {
-            interface_control,
+            sta_tx_rx,
             mac_address: MACAddress::new(mac_address),
-            connection_state: &resources.connection_state,
             rx_queue: &resources.user_queue,
-            rx_router: &resources.rx_router,
-            phy_rate: &resources.phy_rate,
         },
         StaRunner {
             connection_runner: ConnectionRunner {
+                sta_tx_rx,
                 bg_rx_queue: &resources.bg_queue,
-                interface_control,
                 tx_runner: Some(tx_runner),
                 state_runner,
-                connection_state: &resources.connection_state,
-                phy_rate: &resources.phy_rate,
             },
             routing_runner: RoutingRunner {
-                connection_state: &resources.connection_state,
+                sta_tx_rx,
                 bg_queue_sender: resources.bg_queue.dyn_sender(),
                 interface_rx_queue,
-                rx_router: &resources.rx_router,
                 rx_runner,
                 user_queue_sender: resources.user_queue.dyn_sender(),
             },
