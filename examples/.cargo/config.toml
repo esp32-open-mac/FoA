@@ -1,5 +1,5 @@
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv"))']
-runner = "espflash flash --monitor -C -L defmt -S"
+runner = "espflash flash --monitor -L defmt -S"
 
 [build]
 rustflags = [
