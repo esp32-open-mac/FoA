@@ -71,7 +71,7 @@ impl ConnectionOperation<'_, '_> {
                 0,
                 false,
             )
-            .unwrap();
+            .map_err(|_| StaError::TxBufferTooSmall)?;
         let res = self
             .sta_tx_rx
             .interface_control
@@ -145,7 +145,7 @@ impl ConnectionOperation<'_, '_> {
                 0,
                 false,
             )
-            .unwrap();
+            .map_err(|_| StaError::TxBufferTooSmall)?;
 
         let _ = self
             .sta_tx_rx

@@ -59,6 +59,8 @@ mod rx_router;
 pub enum StaError {
     /// An error occured in the lower MAC.
     LMacError(LMacError),
+    /// The TX buffers provided by the LMAC are too small. This is a config issue with FoA.
+    TxBufferTooSmall,
     /// The scan was unable to find the specified ESS.
     UnableToFindEss,
     /// No ACK was received in time.
