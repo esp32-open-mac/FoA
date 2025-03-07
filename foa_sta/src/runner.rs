@@ -184,10 +184,10 @@ impl ConnectionRunner<'_, '_> {
             .await;
 
             // We reset all connection specific parameters here.
+            // Unlocking the channel was already done, by any path leading to disconnection.
             self.sta_tx_rx
                 .interface_control
                 .set_filter_status(RxFilterBank::BSSID, false);
-            self.state_runner.set_link_state(LinkState::Down);
             debug!("Link went down.");
         }
     }
