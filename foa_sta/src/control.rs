@@ -18,7 +18,7 @@ use crate::{
         scan::{scan, ScanConfig, ScanType},
     },
     rx_router::RouterQueue,
-    ConnectionInfo, StaTxRx,
+    ConnectionInfo, StaTxRx, RX_QUEUE_LEN,
 };
 
 use super::{ConnectionState, StaError, DEFAULT_TIMEOUT};
@@ -56,7 +56,7 @@ impl BSS {
 /// This provides control over the STA interface.
 pub struct StaControl<'foa, 'vif> {
     // Low level RX/TX.
-    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
+    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Misc.

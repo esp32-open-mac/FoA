@@ -26,13 +26,13 @@ use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
     rx_router::{Operation, RouterQueue},
-    StaError, StaTxRx,
+    StaError, StaTxRx, RX_QUEUE_LEN,
 };
 
 /// Connecting to an AP.
 pub struct ConnectionOperation<'foa, 'vif> {
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
-    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
+    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
     pub(crate) router_queue: RouterQueue,
 }
 impl ConnectionOperation<'_, '_> {

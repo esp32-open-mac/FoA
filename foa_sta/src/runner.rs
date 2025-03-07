@@ -28,11 +28,11 @@ use llc_rs::SnapLlcFrame;
 
 use crate::{
     operations::deauth::send_deauth, rx_router::RouterQueue, ConnectionState,
-    ConnectionStateTracker, StaTxRx, MTU,
+    ConnectionStateTracker, StaTxRx, MTU, RX_QUEUE_LEN,
 };
 pub(crate) struct ConnectionRunner<'foa, 'vif> {
     // Low level RX/TX.
-    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
+    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Upper layer control.

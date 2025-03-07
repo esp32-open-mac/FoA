@@ -727,6 +727,7 @@ dependencies = [
  "embassy-net-driver-channel",
  "embassy-sync",
  "embassy-time",
+ "esp-config",
  "ethernet",
  "foa",
  "heapless 0.8.0",

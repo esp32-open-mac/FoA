@@ -8,7 +8,7 @@ use ieee80211::{mgmt_frame::BeaconFrame, scroll::Pread};
 
 use crate::{
     rx_router::{Operation, RouterQueue},
-    StaError, StaTxRx, BSS,
+    StaError, StaTxRx, BSS, RX_QUEUE_LEN,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -104,7 +104,7 @@ async fn enumerate_bss_on_channel<const MAX_BSS: usize>(
 /// ESS and stopping once it's found.
 pub async fn scan<const MAX_BSS: usize>(
     sta_tx_rx: &StaTxRx<'_, '_>,
-    rx_queue: &Channel<NoopRawMutex, ReceivedFrame<'_>, 4>,
+    rx_queue: &Channel<NoopRawMutex, ReceivedFrame<'_>, RX_QUEUE_LEN>,
     router_queue: RouterQueue,
     scan_config: Option<ScanConfig<'_>>,
     mut scan_type: ScanType<'_, MAX_BSS>,

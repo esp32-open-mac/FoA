@@ -28,6 +28,7 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::Duration;
+use esp_config::esp_config_int;
 use ieee80211::{
     common::{AssociationID, IEEE80211StatusCode},
     mac_parser::MACAddress,
@@ -168,15 +169,19 @@ impl StaTxRx<'_, '_> {
     }
 }
 
+pub(crate) const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX_QUEUE_LEN");
+pub(crate) const NET_TX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_TX_BUFFERS");
+pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_RX_BUFFERS");
+
 /// Shared resources for the STA interface.
 pub struct StaResources<'foa> {
     // RX routing.
     rx_router: RxRouter,
-    bg_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
-    user_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, 4>,
+    bg_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
+    user_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
 
     // Networking.
-    channel_state: ch::State<MTU, 4, 4>,
+    channel_state: ch::State<MTU, NET_RX_BUFFERS, NET_TX_BUFFERS>,
 
     // State tracking.
     connection_state: ConnectionStateTracker,
