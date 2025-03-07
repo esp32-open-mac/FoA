@@ -101,12 +101,6 @@ async fn main(spawner: Spawner) {
         peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
-    extern "C" {
-        fn phy_set_most_tpw(power: u8);
-    }
-    unsafe {
-        phy_set_most_tpw(84);
-    }
     spawner.spawn(foa_task(foa_runner)).unwrap();
 
     let mut mac_address = [0u8; 6];

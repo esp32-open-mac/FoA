@@ -67,6 +67,12 @@ async fn main(spawner: Spawner) {
         sta_resources,
         None,
     );
+    extern "C" {
+        fn phy_set_most_tpw(power: u8);
+    }
+    unsafe {
+        phy_set_most_tpw(84);
+    }
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
     let mut mac_address = [0u8; 6];
@@ -82,13 +88,12 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    let network = sta_control.find_ess(None, SSID).await.unwrap();
     sta_control
-        .connect(&network, Some(Duration::from_secs(1)))
+        .connect_by_ssid(SSID, Some(Duration::from_secs(1)))
         .await
         .unwrap();
 
-    info!("Connected to {}.", network.ssid);
+    info!("Connected to {}.", SSID);
 
     net_stack.wait_config_up().await;
     info!(

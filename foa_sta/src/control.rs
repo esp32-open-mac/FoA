@@ -1,12 +1,12 @@
 //! This module provides control over the STA interface.
 
-use core::str::FromStr;
-
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::Duration;
 use ieee80211::{
-    common::AssociationID, elements::DSSSParameterSetElement, mac_parser::MACAddress,
-    mgmt_frame::BeaconFrame, scroll::Pread,
+    common::AssociationID,
+    elements::DSSSParameterSetElement,
+    mac_parser::MACAddress,
+    mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
 };
 
 use foa::{esp_wifi_hal::WiFiRate, ReceivedFrame};
@@ -15,7 +15,7 @@ use crate::{
     operations::{
         connect::ConnectionOperation,
         deauth::send_deauth,
-        scan::{scan, ScanConfig},
+        scan::{scan, ScanConfig, ScanType},
     },
     rx_router::RouterQueue,
     ConnectionInfo, StaTxRx,
@@ -30,6 +30,27 @@ pub struct BSS {
     pub channel: u8,
     pub bssid: MACAddress,
     pub last_rssi: i8,
+}
+impl BSS {
+    /// Create a [BSS] from the information in a beacon or probe response frame.
+    pub fn from_beacon_like<Subtype>(
+        frame: ManagementFrame<BeaconLikeBody<'_, Subtype>>,
+        rssi: i8,
+    ) -> Option<Self> {
+        let mut ssid = heapless::String::new();
+        let _ = ssid.push_str(frame.ssid()?);
+        let channel = frame
+            .elements
+            .get_first_element::<DSSSParameterSetElement>()?
+            .current_channel;
+        let bssid = frame.header.bssid;
+        Some(Self {
+            ssid,
+            channel,
+            bssid,
+            last_rssi: rssi,
+        })
+    }
 }
 
 /// This provides control over the STA interface.
@@ -65,41 +86,7 @@ impl StaControl<'_, '_> {
             self.rx_queue,
             RouterQueue::User,
             scan_config,
-            |received| {
-                let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
-                    return true;
-                };
-                let Some(ssid) = beacon_frame.ssid() else {
-                    return true;
-                };
-                if ssid.trim().is_empty() {
-                    return true;
-                }
-                if let Some(bss) = found_bss
-                    .iter_mut()
-                    .find(|bss| bss.bssid == beacon_frame.header.bssid)
-                {
-                    bss.last_rssi = received.rssi();
-                } else {
-                    let Some(channel) = beacon_frame
-                        .elements
-                        .get_first_element::<DSSSParameterSetElement>()
-                        .map(|dsss_parameter_set| dsss_parameter_set.current_channel)
-                    else {
-                        return true;
-                    };
-                    let Ok(ssid) = heapless::String::from_str(ssid) else {
-                        return true;
-                    };
-                    let _ = found_bss.push(BSS {
-                        ssid,
-                        channel,
-                        bssid: beacon_frame.header.bssid,
-                        last_rssi: received.rssi(),
-                    });
-                }
-                true
-            },
+            ScanType::Enumerate(found_bss),
         )
         .await
     }
@@ -110,42 +97,12 @@ impl StaControl<'_, '_> {
         ssid: &str,
     ) -> Result<BSS, StaError> {
         let mut ess = None;
-        scan(
+        scan::<0>(
             self.sta_tx_rx,
             self.rx_queue,
             RouterQueue::User,
             scan_config,
-            |received| {
-                let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
-                    return true;
-                };
-                let Some(received_ssid) = beacon_frame.ssid() else {
-                    return true;
-                };
-                if received_ssid.trim().is_empty() {
-                    return true;
-                }
-                if ssid == received_ssid {
-                    let Some(channel) = beacon_frame
-                        .elements
-                        .get_first_element::<DSSSParameterSetElement>()
-                        .map(|dsss_parameter_set| dsss_parameter_set.current_channel)
-                    else {
-                        return true;
-                    };
-                    let Ok(ssid) = heapless::String::from_str(ssid) else {
-                        return true;
-                    };
-                    ess = Some(BSS {
-                        ssid,
-                        channel,
-                        bssid: beacon_frame.header.bssid,
-                        last_rssi: received.rssi(),
-                    });
-                    return false;
-                }
-                true
-            },
+            ScanType::Search(ssid, &mut ess),
         )
         .await?;
         ess.ok_or(StaError::UnableToFindEss)
@@ -166,6 +123,7 @@ impl StaControl<'_, '_> {
             debug!("Disconnecting from {}.", connection_info.bssid);
             self.disconnect_internal(connection_info).await;
         }
+        self.sta_tx_rx.reset_phy_rate();
         let aid = ConnectionOperation {
             sta_tx_rx: self.sta_tx_rx,
             rx_queue: self.rx_queue,
@@ -175,7 +133,7 @@ impl StaControl<'_, '_> {
             bss,
             timeout.unwrap_or(DEFAULT_TIMEOUT),
             self.mac_address,
-            self.sta_tx_rx.phy_rate.get(),
+            self.sta_tx_rx.phy_rate(),
         )
         .await?;
         self.sta_tx_rx
@@ -206,7 +164,7 @@ impl StaControl<'_, '_> {
         send_deauth(
             self.sta_tx_rx.interface_control,
             &connection_info,
-            self.sta_tx_rx.phy_rate.get(),
+            self.sta_tx_rx.phy_rate(),
         )
         .await;
         self.sta_tx_rx.reset_phy_rate();
@@ -230,10 +188,10 @@ impl StaControl<'_, '_> {
     }
     /// Get the currently used PHY rate.
     pub fn phy_rate(&self) -> WiFiRate {
-        self.sta_tx_rx.phy_rate.get()
+        self.sta_tx_rx.phy_rate()
     }
     /// Override the PHY rate.
     pub fn override_phy_rate(&self, phy_rate: WiFiRate) {
-        self.sta_tx_rx.phy_rate.set(phy_rate);
+        self.sta_tx_rx.set_phy_rate(phy_rate);
     }
 }

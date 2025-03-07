@@ -149,7 +149,7 @@ impl ConnectionRunner<'_, '_> {
                 .transmit(
                     &mut tx_buf[..written],
                     &TxParameters {
-                        rate: sta_tx_rx.phy_rate.get(),
+                        rate: sta_tx_rx.phy_rate(),
                         ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                     },
                     true,

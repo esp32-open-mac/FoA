@@ -153,12 +153,18 @@ pub(crate) struct StaTxRx<'foa, 'vif> {
     pub(crate) rx_router: &'vif RxRouter,
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) connection_state: &'vif ConnectionStateTracker,
-    pub(crate) phy_rate: &'vif Cell<WiFiRate>,
+    phy_rate: &'vif Cell<WiFiRate>,
 }
 impl StaTxRx<'_, '_> {
     /// Reset the PHY rate.
     pub fn reset_phy_rate(&self) {
         self.phy_rate.take();
+    }
+    pub fn phy_rate(&self) -> WiFiRate {
+        self.phy_rate.get()
+    }
+    pub fn set_phy_rate(&self, phy_rate: WiFiRate) {
+        self.phy_rate.set(phy_rate);
     }
 }
 
