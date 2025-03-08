@@ -1,7 +1,10 @@
 //! This module implements buffer management for TX.
 //!
 //! You can use [LMacTransmitEndpoint::alloc_tx_buf](crate::lmac::LMacInterfaceControl::alloc_tx_buf) to wait for a TX buffer to become available.
-use core::ops::{Deref, DerefMut};
+use core::{
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
@@ -25,19 +28,19 @@ pub struct TxBuffer<'res> {
     /// to it. Due to this, the pointer can never be dangling.
     /// The buffer queue also ensures, that only one [TxBuffer] can point to a certain buffer, so
     /// no race conditions can occur.
-    buffer: *mut [u8],
+    buffer: NonNull<[u8]>,
     /// A sender to the buffer queue.
-    sender: channel::DynamicSender<'res, *mut [u8]>,
+    sender: channel::DynamicSender<'res, NonNull<[u8]>>,
 }
 impl Deref for TxBuffer<'_> {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        unsafe { self.buffer.as_ref() }.unwrap()
+        unsafe { self.buffer.as_ref() }
     }
 }
 impl DerefMut for TxBuffer<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.buffer.as_mut() }.unwrap()
+        unsafe { self.buffer.as_mut() }
     }
 }
 impl Drop for TxBuffer<'_> {
@@ -55,8 +58,8 @@ impl Drop for TxBuffer<'_> {
 /// A dynamic [TxBufferManager], with generics elided.
 #[derive(Clone, Copy)]
 pub(crate) struct DynTxBufferManager<'res> {
-    buffer_sender: DynamicSender<'res, *mut [u8]>,
-    buffer_receiver: DynamicReceiver<'res, *mut [u8]>,
+    buffer_sender: DynamicSender<'res, NonNull<[u8]>>,
+    buffer_receiver: DynamicReceiver<'res, NonNull<[u8]>>,
 }
 impl<'res> DynTxBufferManager<'res> {
     /// Allocate a new [TxBuffer].
@@ -72,7 +75,7 @@ impl<'res> DynTxBufferManager<'res> {
 
 /// A struct managing the allocation of [TxBuffer]s from a pre-allocated slab of memory.
 pub(crate) struct TxBufferManager<const TX_BUFFER_COUNT: usize> {
-    buffer_queue: channel::Channel<NoopRawMutex, *mut [u8], TX_BUFFER_COUNT>,
+    buffer_queue: channel::Channel<NoopRawMutex, NonNull<[u8]>, TX_BUFFER_COUNT>,
 }
 impl<const TX_BUFFER_COUNT: usize> TxBufferManager<TX_BUFFER_COUNT> {
     /// Create a new [TxBufferManager], with the provided buffers.
@@ -85,7 +88,7 @@ impl<const TX_BUFFER_COUNT: usize> TxBufferManager<TX_BUFFER_COUNT> {
         let buffer_queue = Channel::new();
 
         for buffer in buffers {
-            let _ = buffer_queue.try_send(buffer.as_mut_slice() as *mut _);
+            let _ = buffer_queue.try_send(NonNull::from(buffer.as_mut_slice()));
         }
 
         Self { buffer_queue }

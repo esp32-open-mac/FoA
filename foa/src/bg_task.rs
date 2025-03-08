@@ -40,11 +40,14 @@ impl<'res> FoARunner<'res> {
     }
     #[cfg(not(feature = "arc_buffers"))]
     fn process_packet(&mut self, buffer: BorrowedBuffer<'res>) {
-        let interface_count = buffer.interface_iterator().count();
-        if interface_count != 1 {
+        let mut interface_iterator = buffer.interface_iterator();
+        let Some(interface) = interface_iterator.next() else {
+            return;
+        };
+        if interface_iterator.next().is_some() {
             return;
         }
-        let interface = buffer.interface_iterator().next().unwrap();
+        drop(interface_iterator);
         let _ = self.rx_queue_senders[interface].try_send(buffer);
     }
     /// Run the FoA background task.

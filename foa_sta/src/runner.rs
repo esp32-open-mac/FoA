@@ -27,7 +27,7 @@ use ieee80211::{
 use llc_rs::SnapLlcFrame;
 
 use crate::{
-    operations::deauth::send_deauth, rx_router::RouterQueue, ConnectionState,
+    operations::deauth::send_deauth, rx_router::RouterQueue, ConnectionInfo, ConnectionState,
     ConnectionStateTracker, StaTxRx, MTU, RX_QUEUE_LEN,
 };
 pub(crate) struct ConnectionRunner<'foa, 'vif> {
@@ -36,7 +36,6 @@ pub(crate) struct ConnectionRunner<'foa, 'vif> {
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Upper layer control.
-    pub(crate) tx_runner: Option<TxRunner<'vif, MTU>>,
     pub(crate) state_runner: StateRunner<'vif>,
 }
 impl ConnectionRunner<'_, '_> {
@@ -71,7 +70,12 @@ impl ConnectionRunner<'_, '_> {
         };
     }
     /// Run the background task, while connected.
-    async fn run_connection(&self) {
+    async fn run_connection(
+        &self,
+        ConnectionInfo {
+            bssid, own_address, ..
+        }: ConnectionInfo,
+    ) {
         let mut beacon_timeout = Ticker::every(Duration::from_secs(3));
         loop {
             // We wait for one of three things to happen.
@@ -99,12 +103,17 @@ impl ConnectionRunner<'_, '_> {
                 Either3::Third(_) => {
                     // Since we assume the network either can't or barely hear us, we use the
                     // lowest PHY rate.
-                    send_deauth(
+                    if send_deauth(
                         self.sta_tx_rx.interface_control,
-                        &self.sta_tx_rx.connection_state.connection_info().unwrap(),
+                        bssid,
+                        own_address,
                         WiFiRate::PhyRate1ML,
                     )
-                    .await;
+                    .await
+                    .is_err()
+                    {
+                        error!("The TX buffer was too small to transmit a deauth.");
+                    }
                     self.set_disconnected();
                     debug!("Disconnected from BSS due to beacon timeout.");
                     return;
@@ -164,8 +173,7 @@ impl ConnectionRunner<'_, '_> {
         }
     }
     /// Run all actual background operations.
-    async fn run(&mut self) -> ! {
-        let mut tx_runner = self.tx_runner.take().unwrap();
+    async fn run(&mut self, tx_runner: &mut TxRunner<'_, MTU>) -> ! {
         loop {
             let connection_info = self.sta_tx_rx.connection_state.wait_for_connection().await;
             self.state_runner
@@ -178,8 +186,8 @@ impl ConnectionRunner<'_, '_> {
             // Run the connection, until we're disconnected.
             select3(
                 self.sta_tx_rx.connection_state.wait_for_disconnection(),
-                self.run_connection(),
-                Self::run_msdu_tx(&mut tx_runner, self.sta_tx_rx),
+                self.run_connection(connection_info),
+                Self::run_msdu_tx(tx_runner, self.sta_tx_rx),
             )
             .await;
 
@@ -302,15 +310,20 @@ impl RoutingRunner<'_, '_> {
     }
 }
 /// Interface runner for the STA interface.
-pub struct StaRunner<'vif, 'foa> {
-    pub(crate) connection_runner: ConnectionRunner<'vif, 'foa>,
-    pub(crate) routing_runner: RoutingRunner<'vif, 'foa>,
+pub struct StaRunner<'foa, 'vif> {
+    pub(crate) tx_runner: TxRunner<'vif, MTU>,
+    pub(crate) connection_runner: ConnectionRunner<'foa, 'vif>,
+    pub(crate) routing_runner: RoutingRunner<'foa, 'vif>,
 }
 impl StaRunner<'_, '_> {
     /// Run the station interface.
     pub async fn run(&mut self) -> ! {
         debug!("STA runner active.");
-        join(self.connection_runner.run(), self.routing_runner.run()).await;
+        join(
+            self.connection_runner.run(&mut self.tx_runner),
+            self.routing_runner.run(),
+        )
+        .await;
         unreachable!()
     }
 }

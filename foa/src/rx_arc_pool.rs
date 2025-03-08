@@ -76,7 +76,14 @@ impl RxArcPool {
         // If you have any soundness concerns PLEASE bring them up, since this goes quite a bit
         // over my head. (Frostie314159)
         let inner = self.state.lock(|rc| {
-            rc.borrow_mut()
+            let Ok(mut state) = rc.try_borrow_mut() else {
+                // This should not be reachable, since FoA can only run on one core at a time, so
+                // unless, we tried to lock it again in here, this can never fail. I decided to
+                // just return None in this case, since I wanted to avoid unnecessary panic
+                // machinery being generated.
+                return None;
+            };
+            state
                 .iter_mut()
                 .enumerate()
                 .find(|inner| inner.1.is_none())
@@ -110,7 +117,11 @@ impl RxArcPool {
         let inner_ref = unsafe { inner.as_ref() };
         // Indicates, that this arc is available again.
         self.state.lock(|rc| {
-            rc.borrow_mut()[inner_ref.index] = None;
+            let Ok(mut state) = rc.try_borrow_mut() else {
+                // See alloc for the explanation, of why this is unreachable.
+                return;
+            };
+            state[inner_ref.index] = None;
         });
     }
 }

@@ -135,7 +135,7 @@ impl ConnectionOperation<'_, '_> {
                         capabilities_info: CapabilitiesInformation::new().with_is_ess(true),
                         listen_interval: 0,
                         elements: element_chain! {
-                            SSIDElement::new(bss.ssid.as_str()).unwrap(),
+                            SSIDElement::new(bss.ssid.as_str()).ok_or(StaError::InvalidBss)?,
                             DEFAULT_SUPPORTED_RATES,
                             DEFAULT_XRATES
                         },
@@ -170,19 +170,17 @@ impl ConnectionOperation<'_, '_> {
             );
             return Err(StaError::FrameDeserializationFailed);
         };
-        if assoc_response.status_code != IEEE80211StatusCode::Success
-            || assoc_response.association_id.is_none()
-        {
-            debug!(
-                "Failed to associate with {}, status: {:?}.",
-                bss.bssid, assoc_response.status_code
-            );
-            Err(StaError::AssociationFailure(assoc_response.status_code))
-        } else {
-            let aid = assoc_response.association_id.unwrap();
-            debug!("Successfuly associated with {}, AID: {:?}.", bss.bssid, aid);
-            Ok(aid)
+        if let Some(aid) = assoc_response.association_id {
+            if assoc_response.status_code == IEEE80211StatusCode::Success {
+                debug!("Successfuly associated with {}, AID: {:?}.", bss.bssid, aid);
+                return Ok(aid);
+            }
         }
+        debug!(
+            "Failed to associate with {}, status: {:?}.",
+            bss.bssid, assoc_response.status_code
+        );
+        Err(StaError::AssociationFailure(assoc_response.status_code))
     }
     pub async fn run(
         self,

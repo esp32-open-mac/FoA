@@ -7,26 +7,28 @@ use foa::{
 use ieee80211::{
     common::{IEEE80211Reason, SequenceControl},
     element_chain,
+    mac_parser::MACAddress,
     mgmt_frame::{body::DeauthenticationBody, DeauthenticationFrame, ManagementFrameHeader},
     scroll::Pwrite,
 };
 
-use crate::ConnectionInfo;
+use crate::StaError;
 
 /// This will transmit a deauth frame to the AP, but not unlock the channel.
 pub async fn send_deauth(
     interface_control: &LMacInterfaceControl<'_>,
-    connection_info: &ConnectionInfo,
+    bssid: MACAddress,
+    own_address: MACAddress,
     phy_rate: WiFiRate,
-) {
+) -> Result<(), StaError> {
     let mut tx_buf = interface_control.alloc_tx_buf().await;
     let written = tx_buf
         .pwrite(
             DeauthenticationFrame {
                 header: ManagementFrameHeader {
-                    receiver_address: connection_info.bssid,
-                    bssid: connection_info.bssid,
-                    transmitter_address: connection_info.own_address,
+                    receiver_address: bssid,
+                    bssid,
+                    transmitter_address: own_address,
                     sequence_control: SequenceControl::new(),
                     ..Default::default()
                 },
@@ -38,7 +40,7 @@ pub async fn send_deauth(
             },
             0,
         )
-        .unwrap();
+        .map_err(|_| StaError::TxBufferTooSmall)?;
     let _ = interface_control
         .transmit(
             &mut tx_buf[..written],
@@ -49,4 +51,5 @@ pub async fn send_deauth(
             true,
         )
         .await;
+    Ok(())
 }

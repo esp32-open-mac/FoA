@@ -19,14 +19,10 @@
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 
 use embassy_net::driver::HardwareAddress;
-use embassy_sync::{
-    blocking_mutex::{raw::NoopRawMutex, NoopMutex},
-    channel::Channel,
-    signal::Signal,
-};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel, signal::Signal};
 use embassy_time::Duration;
 use esp_config::esp_config_int;
 use ieee80211::{
@@ -79,6 +75,8 @@ pub enum StaError {
     NotConnected,
     /// The network, too which a connection was requested, is the same as the current one.
     SameNetwork,
+    /// The provided BSS was invalid.
+    InvalidBss,
 }
 
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
@@ -103,26 +101,25 @@ pub(crate) enum ConnectionState {
 }
 /// Tracks the connection state.
 pub(crate) struct ConnectionStateTracker {
-    connection_state: NoopMutex<RefCell<ConnectionState>>,
+    connection_state: Cell<ConnectionState>,
     connection_state_signal: Signal<NoopRawMutex, ()>,
 }
 impl ConnectionStateTracker {
     /// Create a new state tracker.
     pub const fn new() -> Self {
         Self {
-            connection_state: NoopMutex::new(RefCell::new(ConnectionState::Disconnected)),
+            connection_state: Cell::new(ConnectionState::Disconnected),
             connection_state_signal: Signal::new(),
         }
     }
     /// Signal a new state.
     pub fn signal_state(&self, new_state: ConnectionState) {
-        self.connection_state
-            .lock(|rc| *rc.borrow_mut() = new_state);
+        self.connection_state.set(new_state);
         self.connection_state_signal.signal(());
     }
     /// Get the connection info.
     pub fn connection_info(&self) -> Option<ConnectionInfo> {
-        match self.connection_state.lock(|rc| *rc.borrow()) {
+        match self.connection_state.get() {
             ConnectionState::Connected(connection_info) => Some(connection_info),
             ConnectionState::Disconnected => None,
         }
@@ -130,9 +127,7 @@ impl ConnectionStateTracker {
     /// Wait for a connected state to be signaled.
     pub async fn wait_for_connection(&self) -> ConnectionInfo {
         loop {
-            let ConnectionState::Connected(connection_info) =
-                self.connection_state.lock(|rc| *rc.borrow())
-            else {
+            let ConnectionState::Connected(connection_info) = self.connection_state.get() else {
                 self.connection_state_signal.wait().await;
                 continue;
             };
@@ -141,10 +136,7 @@ impl ConnectionStateTracker {
     }
     /// Wait for a disconnected state to be signaled.
     pub async fn wait_for_disconnection(&self) {
-        while matches!(
-            self.connection_state.lock(|rc| *rc.borrow()),
-            ConnectionState::Connected(_)
-        ) {
+        while matches!(self.connection_state.get(), ConnectionState::Connected(_)) {
             self.connection_state_signal.wait().await
         }
     }
@@ -256,10 +248,10 @@ pub fn new_sta_interface<'foa: 'vif, 'vif>(
             rx_queue: &resources.user_queue,
         },
         StaRunner {
+            tx_runner,
             connection_runner: ConnectionRunner {
                 sta_tx_rx,
                 bg_rx_queue: &resources.bg_queue,
-                tx_runner: Some(tx_runner),
                 state_runner,
             },
             routing_runner: RoutingRunner {

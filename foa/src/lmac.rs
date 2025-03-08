@@ -28,8 +28,9 @@ use core::{
 use embassy_futures::join::join_array;
 use embassy_sync::{
     blocking_mutex::{self, raw::NoopRawMutex},
+    mutex::Mutex,
     waitqueue::AtomicWaker,
-    watch::Watch,
+    watch::{DynReceiver, Watch},
 };
 use esp_hal::efuse::Efuse;
 use esp_wifi_hal::{
@@ -39,7 +40,7 @@ use esp_wifi_hal::{
 
 use crate::tx_buffer_management::{DynTxBufferManager, TxBuffer};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 /// The status of the channel lock.
 struct ChannelState {
     locks: Option<([bool; WiFi::INTERFACE_COUNT], u8)>,
@@ -118,6 +119,8 @@ pub enum LMacError {
     ChannelLockedByOtherInterface,
     /// The off channel request was rejected.
     OffChannelRequestRejected,
+    /// Another off channel operation is already in progress.
+    OffChannelOperationAlreadyInProgress,
 }
 
 /// An off channel request.
@@ -198,6 +201,10 @@ impl OffChannelRequester {
 pub(crate) struct SharedLMacState {
     wifi: WiFi<'static>,
     // Channel Management
+    /// The current channel state.
+    ///
+    /// Throughout the codebase, it's assumed, that inside one lock, you don't reacquire it again.
+    /// This is used to prevent unnecessary panic code being generated.
     channel_state: blocking_mutex::NoopMutex<RefCell<ChannelState>>,
     off_channel_requesters: [OffChannelRequester; WiFi::INTERFACE_COUNT],
     off_channel_completion_signal: Watch<NoopRawMutex, (), { WiFi::INTERFACE_COUNT }>,
@@ -223,15 +230,24 @@ impl SharedLMacState {
     ) {
         (
             LMacReceiveEndpoint { shared_state: self },
-            core::array::from_fn(|i| LMacInterfaceControl {
+            core::array::from_fn(|i| {
+                LMacInterfaceControl {
                 shared_state: self,
                 rx_filter_interface: i,
                 dyn_tx_buffer_manager,
+                off_channel_completion_listener: Mutex::new(
+                    self.off_channel_completion_signal.dyn_receiver().expect("This shouldn't be able to fail, since we have as many receivers as interface controls."),
+                ),
+            }
             }),
         )
     }
     fn get_channel_state(&self) -> ChannelState {
-        self.channel_state.lock(|rc| *rc.borrow())
+        self.channel_state.lock(|rc| {
+            rc.try_borrow()
+                .map(|channel_state| *channel_state)
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -280,7 +296,11 @@ impl Drop for OffChannelOperation<'_, '_> {
         self.interface_control
             .shared_state
             .channel_state
-            .lock(|cs| cs.borrow_mut().off_channel_operation_interface = None);
+            .lock(|cs| {
+                let _ = cs
+                    .try_borrow_mut()
+                    .map(|mut channel_state| channel_state.off_channel_operation_interface = None);
+            });
         self.interface_control
             .shared_state
             .off_channel_completion_signal
@@ -341,6 +361,7 @@ pub struct LMacInterfaceControl<'res> {
     rx_filter_interface: usize,
     /// Access to the TX buffer manager.
     dyn_tx_buffer_manager: DynTxBufferManager<'res>,
+    off_channel_completion_listener: Mutex<NoopRawMutex, DynReceiver<'res, ()>>,
 }
 impl<'res> LMacInterfaceControl<'res> {
     /// Some default transmission parameters.
@@ -377,8 +398,11 @@ impl<'res> LMacInterfaceControl<'res> {
     fn lock_channel_internal(&self, channel: u8) -> Result<(), LMacError> {
         // This will attempt to first lock the channel and then go to that channel, if it changed.
         if self.shared_state.channel_state.lock(|cs| {
-            cs.borrow_mut()
-                .lock_channel(self.rx_filter_interface, channel)
+            // It's again assumed here, that no other lock on the channel state is currently being
+            // held, so this will never fail.
+            cs.try_borrow_mut().map_or(Ok(false), |mut channel_state| {
+                channel_state.lock_channel(self.rx_filter_interface, channel)
+            })
         })? {
             if self.shared_state.wifi.set_channel(channel).is_ok() {
                 debug!(
@@ -394,9 +418,11 @@ impl<'res> LMacInterfaceControl<'res> {
         Ok(())
     }
     fn unlock_channel_internal(&self) {
-        self.shared_state
-            .channel_state
-            .lock(|rc| rc.borrow_mut().unlock_channel(self.rx_filter_interface));
+        self.shared_state.channel_state.lock(|rc| {
+            let _ = rc
+                .try_borrow_mut()
+                .map(|mut channel_state| channel_state.unlock_channel(self.rx_filter_interface));
+        });
     }
     /// Begin an interface bringup operation.
     ///
@@ -461,16 +487,31 @@ impl<'res> LMacInterfaceControl<'res> {
         );
         self.unlock_channel_internal();
     }
-    /// Begin an interface off channel operation.
+    /// Wait for any pending off channel operations to complete.
+    pub async fn wait_for_off_channel_completion(&self) {
+        if !self
+            .shared_state
+            .get_channel_state()
+            .is_off_channel_operation_in_progress()
+        {
+            return;
+        }
+        self.off_channel_completion_listener
+            .lock()
+            .await
+            .get()
+            .await
+    }
+    /// Try to start an interface off channel operation.
     ///
-    /// This will request grants from all interfaces, that currently have lock on the channel.
-    /// When or if an interface responds to such a request is up to the specific implementation. It
-    /// is therefore advised to wrap this in a timeout.
-    pub async fn begin_interface_off_channel_operation<'a>(
+    /// This is the same as [Self::begin_interface_off_channel_operation], but won't wait for other
+    /// operations to complete first and instead return [LMacError::OffChannelOperationAlreadyInProgress].
+    pub async fn try_begin_interface_off_channel_operation<'a>(
         &'a self,
     ) -> Result<OffChannelOperation<'a, 'res>, LMacError> {
-        // Before we start any operation, we need to wait for other pending ones to finish.
-        self.wait_for_off_channel_completion().await;
+        if self.off_channel_operation_in_progress() {
+            return Err(LMacError::OffChannelOperationAlreadyInProgress);
+        }
         // At this point we know that no off channel operation is active.
         let channel_state = self.shared_state.get_channel_state().locks;
         if let Some((locks, _)) = channel_state {
@@ -500,7 +541,9 @@ impl<'res> LMacInterfaceControl<'res> {
             }
         }
         self.shared_state.channel_state.lock(|cs| {
-            cs.borrow_mut().off_channel_operation_interface = Some(self.rx_filter_interface)
+            if let Ok(mut channel_state) = cs.try_borrow_mut() {
+                channel_state.off_channel_operation_interface = Some(self.rx_filter_interface);
+            }
         });
         debug!(
             "Successfully started off channel operation for interface {}.",
@@ -516,21 +559,18 @@ impl<'res> LMacInterfaceControl<'res> {
                 .map(|(_, channel)| channel),
         })
     }
-    /// Wait for any pending off channel operations to complete.
-    pub async fn wait_for_off_channel_completion(&self) {
-        if !self
-            .shared_state
-            .get_channel_state()
-            .is_off_channel_operation_in_progress()
-        {
-            return;
-        }
-        self.shared_state
-            .off_channel_completion_signal
-            .receiver()
-            .unwrap()
-            .changed()
-            .await;
+    /// Begin an interface off channel operation and wait for any previous off channel operations
+    /// to complete.
+    ///
+    /// This will request grants from all interfaces, that currently have lock on the channel.
+    /// When or if an interface responds to such a request is up to the specific implementation. It
+    /// is therefore advised to wrap this in a timeout.
+    pub async fn begin_interface_off_channel_operation<'a>(
+        &'a self,
+    ) -> Result<OffChannelOperation<'a, 'res>, LMacError> {
+        // Before we start any operation, we need to wait for other pending ones to finish.
+        self.wait_for_off_channel_completion().await;
+        self.try_begin_interface_off_channel_operation().await
     }
     /// Wait for an off channel operations request to arrive, which can then be granted or rejected.
     pub async fn wait_for_off_channel_request(&self) -> OffChannelRequest<'_> {

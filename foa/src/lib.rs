@@ -153,16 +153,14 @@ pub fn init(
     unsafe {
         phy_set_most_tpw(84);
     }
-    resources.shared_lmac_state = Some(SharedLMacState::new(wifi));
-    resources.tx_buffer_manager = Some(unsafe { TxBufferManager::new(&mut resources.tx_buffers) });
+    let shared_lmac_state = resources
+        .shared_lmac_state
+        .insert(SharedLMacState::new(wifi));
+    let tx_buffer_manager = resources
+        .tx_buffer_manager
+        .insert(unsafe { TxBufferManager::new(&mut resources.tx_buffers) });
     let (lmac_receive_endpoint, lmac_interface_controls) =
-        resources.shared_lmac_state.as_mut().unwrap().split(
-            resources
-                .tx_buffer_manager
-                .as_ref()
-                .unwrap()
-                .dyn_tx_buffer_manager(),
-        );
+        shared_lmac_state.split(tx_buffer_manager.dyn_tx_buffer_manager());
     let rx_queue_senders =
         array::from_fn(|i| unsafe { mem::transmute(resources.rx_queues[i].dyn_sender()) });
     let virtual_interfaces =

@@ -121,7 +121,7 @@ impl StaControl<'_, '_> {
                 return Err(StaError::SameNetwork);
             }
             debug!("Disconnecting from {}.", connection_info.bssid);
-            self.disconnect_internal(connection_info).await;
+            self.disconnect_internal(connection_info).await?;
         }
         self.sta_tx_rx.reset_phy_rate();
         let aid = ConnectionOperation {
@@ -154,20 +154,26 @@ impl StaControl<'_, '_> {
         let bss = self.find_ess(None, ssid).await?;
         self.connect(&bss, timeout).await
     }
-    async fn disconnect_internal(&mut self, connection_info: ConnectionInfo) {
+    async fn disconnect_internal(
+        &mut self,
+        ConnectionInfo {
+            bssid, own_address, ..
+        }: ConnectionInfo,
+    ) -> Result<(), StaError> {
         // NOTE: The channel is already unlocked here, but since there's no await-point between
         // unlocking the channel and transmitting the deauth, no other interface could attempt to
         // lock it before we're done here.
         self.sta_tx_rx
             .connection_state
             .signal_state(ConnectionState::Disconnected);
+        self.sta_tx_rx.reset_phy_rate();
         send_deauth(
             self.sta_tx_rx.interface_control,
-            &connection_info,
+            bssid,
+            own_address,
             self.sta_tx_rx.phy_rate(),
         )
-        .await;
-        self.sta_tx_rx.reset_phy_rate();
+        .await
     }
     /// Disconnect from the current network.
     pub async fn disconnect(&mut self) -> Result<(), StaError> {
@@ -175,7 +181,7 @@ impl StaControl<'_, '_> {
             return Err(StaError::NotConnected);
         };
         self.sta_tx_rx.interface_control.unlock_channel();
-        self.disconnect_internal(connection_info).await;
+        self.disconnect_internal(connection_info).await?;
         debug!("Disconnected from {}", connection_info.bssid);
         Ok(())
     }
