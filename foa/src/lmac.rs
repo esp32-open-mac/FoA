@@ -391,6 +391,28 @@ impl<'res> LMacInterfaceControl<'res> {
             )
             .await
     }
+    /// Transmit a frame and execute the provided closure right before tranmission.
+    ///
+    /// Returns the number of retries.
+    /// For an exact description see [WiFi::transmit_with_hook], as this is just a passthrough.
+    /// NOTE: This will not check, whether an off channel operation is currently in progress.
+    pub async fn transmit_with_hook(
+        &self,
+        buffer: &mut [u8],
+        tx_parameters: &TxParameters,
+        wait_for_ack: bool,
+        pre_transmit_hook: impl FnMut(&mut [u8]),
+    ) -> WiFiResult<usize> {
+        self.shared_state
+            .wifi
+            .transmit_with_hook(
+                buffer,
+                tx_parameters,
+                wait_for_ack.then_some(self.rx_filter_interface),
+                pre_transmit_hook,
+            )
+            .await
+    }
     /// Allocate a [TxBuffer] from the buffer manager.
     pub async fn alloc_tx_buf(&self) -> TxBuffer {
         self.dyn_tx_buffer_manager.alloc().await
