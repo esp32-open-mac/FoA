@@ -13,7 +13,7 @@ embassy-sync = "0.6.1"
 embassy-time = "0.4.0"
 esp-config = "0.3.1"
 ethernet = { version = "0.1.5", default-features = false }
-foa = { path = "../foa/", git = "https://github.com/esp32-open-mac/foa", package = "foa" }
+foa = { path = "../foa/" }
 heapless = "0.8.0"
 ieee80211 = { version = "0.5.4", default-features = false }
 llc-rs = "0.1.0"

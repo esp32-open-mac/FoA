@@ -122,17 +122,13 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "esp32s2")]
     let (rx_pin, tx_pin) = (peripherals.GPIO44, peripherals.GPIO43);
 
-    let (_uart0_rx, mut uart0_tx) = Uart::new(
-        peripherals.UART0,
-        uart::Config::default().with_rx_fifo_full_threshold(64),
-    )
-    .unwrap()
-    .with_rx(rx_pin)
-    .with_tx(tx_pin)
-    .into_async()
-    .split();
+    let mut uart = Uart::new(peripherals.UART0, uart::Config::default())
+        .unwrap()
+        .with_rx(rx_pin)
+        .with_tx(tx_pin)
+        .into_async();
     loop {
         let _ = chunked_reader.read_exact(parrot_buffer).await;
-        let _ = uart0_tx.write_async(parrot_buffer).await;
+        let _ = uart.write_async(parrot_buffer).await;
     }
 }

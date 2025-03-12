@@ -6,8 +6,8 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = { version = "0.23.1", features = [] }
-esp-hal-embassy = { version = "0.6.0", features = [] }
+esp-hal = "1.0.0-beta.0"
+esp-hal-embassy = "0.7.0"
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", features = [] }
 esp-backtrace = { version = "0.15.0", features = [
     "panic-handler",
