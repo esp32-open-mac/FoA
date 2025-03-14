@@ -733,9 +733,9 @@ dependencies = [
 
 [[package]]
 name = "esp-wifi-hal"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70f441f992af99f363fc9a550608b46188dafb6e7f961e0bd4ac24ff31b72ebe"
+checksum = "b388d1deaadbf2db375091f51f4c1b7f368e4793a4323dcb284116ca6f52163a"
 dependencies = [
  "bitfield-struct 0.10.1",
  "cfg-if",
@@ -834,13 +834,14 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foa"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "critical-section",
  "defmt",
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync",
+ "embassy-time",
  "esp-config",
  "esp-hal",
  "esp-wifi-hal",

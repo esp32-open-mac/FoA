@@ -689,4 +689,10 @@ impl<'res> LMacInterfaceControl<'res> {
             self.rx_filter_interface
         );
     }
+    /// Get the current MAC time from the Wi-Fi driver.
+    ///
+    /// For further documentation see [WiFi::mac_time].
+    pub fn mac_time(&self) -> u32 {
+        self.shared_state.wifi.mac_time()
+    }
 }
