@@ -15,6 +15,7 @@ use esp_hal::{
     rng::Rng,
     timer::timg::TimerGroup,
     uart::{self, Uart},
+    Async,
 };
 use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
@@ -77,6 +78,7 @@ async fn main(spawner: Spawner) {
 
     let mut mac_address = [0u8; 6];
     Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
+    mac_address[0] &= !(1);
     sta_control.set_mac_address(mac_address).await.unwrap();
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
@@ -88,10 +90,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    sta_control
-        .connect_by_ssid(SSID, Some(Duration::from_secs(1)))
-        .await
-        .unwrap();
+    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);
 
     info!("Connected to {}.", SSID);
 
@@ -129,6 +128,8 @@ async fn main(spawner: Spawner) {
         .into_async();
     loop {
         let _ = chunked_reader.read_exact(parrot_buffer).await;
-        let _ = uart.write_async(parrot_buffer).await;
+        let _ =
+            <Uart<'static, Async> as embedded_io_async::Write>::write_all(&mut uart, parrot_buffer)
+                .await;
     }
 }
