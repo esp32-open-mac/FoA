@@ -3,7 +3,7 @@ use core::{marker::PhantomData, mem};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
 use foa::{
-    esp_wifi_hal::{RxFilterBank, TxParameters, WiFiError, WiFiRate},
+    esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
     LMacInterfaceControl, ReceivedFrame,
 };
 use ieee80211::{
@@ -19,7 +19,7 @@ use ieee80211::{
         AssociationRequestFrame, AssociationResponseFrame, AuthenticationFrame,
         ManagementFrameHeader,
     },
-    scroll::{Pread, Pwrite},
+    scroll::{ctx::TryIntoCtx, Pread, Pwrite},
 };
 
 use crate::{
@@ -36,8 +36,46 @@ pub struct ConnectionOperation<'foa, 'vif> {
     pub(crate) router_queue: RouterQueue,
 }
 impl ConnectionOperation<'_, '_> {
-    fn defuse(self) {
+    fn complete(self) {
         mem::forget(self);
+    }
+    async fn do_bidirectional_connection_step(
+        &self,
+        tx_frame: impl TryIntoCtx<bool, Error = ieee80211::scroll::Error>,
+        timeout: Duration,
+        phy_rate: WiFiRate,
+        retries: usize,
+    ) -> Result<ReceivedFrame<'_>, StaError> {
+        let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
+        let written = tx_buffer
+            .pwrite(tx_frame, 0)
+            .map_err(|_| StaError::TxBufferTooSmall)?;
+        for _ in 0..retries + 1 {
+            let res = self
+                .sta_tx_rx
+                .interface_control
+                .transmit(
+                    &mut tx_buffer[..written],
+                    &TxParameters {
+                        rate: phy_rate,
+                        ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
+                    },
+                    true,
+                )
+                .await;
+            if res.is_err() {
+                continue;
+            }
+            // Due to the user operation being set to authenticating, we'll only receive authentication
+            // frames.
+            if let Ok(frame) = with_timeout(timeout, self.rx_queue.receive()).await {
+                return Ok(frame);
+            } else {
+                trace!("Response to bidirectional connection step timed out.");
+                continue;
+            };
+        }
+        Err(StaError::ResponseTimeout)
     }
     /// Authenticate with the BSS.
     async fn do_auth(
@@ -46,53 +84,28 @@ impl ConnectionOperation<'_, '_> {
         timeout: Duration,
         mac_address: MACAddress,
         phy_rate: WiFiRate,
+        retries: usize,
     ) -> Result<(), StaError> {
-        let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
-        let written = tx_buffer
-            .pwrite_with(
-                AuthenticationFrame {
-                    header: ManagementFrameHeader {
-                        receiver_address: bss.bssid,
-                        bssid: bss.bssid,
-                        transmitter_address: mac_address,
-                        sequence_control: SequenceControl::new(),
-                        duration: 60,
-                        ..Default::default()
-                    },
-                    body: AuthenticationBody {
-                        status_code: IEEE80211StatusCode::Success,
-                        authentication_algorithm_number:
-                            IEEE80211AuthenticationAlgorithmNumber::OpenSystem,
-                        authentication_transaction_sequence_number: 1,
-                        elements: element_chain! {},
-                        _phantom: PhantomData,
-                    },
-                },
-                0,
-                false,
-            )
-            .map_err(|_| StaError::TxBufferTooSmall)?;
-        let res = self
-            .sta_tx_rx
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: phy_rate,
-                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
-                },
-                true,
-            )
-            .await;
-        if res == Err(WiFiError::AckTimeout) {
-            return Err(StaError::AckTimeout);
-        }
-        // Due to the user operation being set to authenticating, we'll only receive authentication
-        // frames.
-        let Ok(response) = with_timeout(timeout, self.rx_queue.receive()).await else {
-            debug!("Authentication timed out.");
-            return Err(StaError::ResponseTimeout);
+        let auth_frame = AuthenticationFrame {
+            header: ManagementFrameHeader {
+                receiver_address: bss.bssid,
+                bssid: bss.bssid,
+                transmitter_address: mac_address,
+                sequence_control: SequenceControl::new(),
+                duration: 0,
+                ..Default::default()
+            },
+            body: AuthenticationBody {
+                status_code: IEEE80211StatusCode::Success,
+                authentication_algorithm_number: IEEE80211AuthenticationAlgorithmNumber::OpenSystem,
+                authentication_transaction_sequence_number: 1,
+                elements: element_chain! {},
+                _phantom: PhantomData,
+            },
         };
+        let response = self
+            .do_bidirectional_connection_step(auth_frame, timeout, phy_rate, retries)
+            .await?;
         let Ok(auth_frame) = response.mpdu_buffer().pread::<AuthenticationFrame>(0) else {
             debug!(
                 "Failed to authenticate with {}, frame deserialization failed.",
@@ -101,7 +114,7 @@ impl ConnectionOperation<'_, '_> {
             return Err(StaError::FrameDeserializationFailed);
         };
         if auth_frame.status_code == IEEE80211StatusCode::Success {
-            debug!("Successfuly authenticated with {}.", bss.bssid);
+            debug!("Successfully authenticated with {}.", bss.bssid);
             Ok(())
         } else {
             debug!(
@@ -118,52 +131,32 @@ impl ConnectionOperation<'_, '_> {
         timeout: Duration,
         mac_address: MACAddress,
         phy_rate: WiFiRate,
+        retries: usize,
     ) -> Result<AssociationID, StaError> {
-        let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
-        let written = tx_buffer
-            .pwrite_with(
-                AssociationRequestFrame {
-                    header: ManagementFrameHeader {
-                        receiver_address: bss.bssid,
-                        bssid: bss.bssid,
-                        transmitter_address: mac_address,
-                        sequence_control: SequenceControl::new(),
-                        duration: 60,
-                        ..Default::default()
-                    },
-                    body: AssociationRequestBody {
-                        capabilities_info: CapabilitiesInformation::new().with_is_ess(true),
-                        listen_interval: 0,
-                        elements: element_chain! {
-                            SSIDElement::new(bss.ssid.as_str()).ok_or(StaError::InvalidBss)?,
-                            DEFAULT_SUPPORTED_RATES,
-                            DEFAULT_XRATES
-                        },
-                        _phantom: PhantomData,
-                    },
+        let assoc_request_frame = AssociationRequestFrame {
+            header: ManagementFrameHeader {
+                receiver_address: bss.bssid,
+                bssid: bss.bssid,
+                transmitter_address: mac_address,
+                sequence_control: SequenceControl::new(),
+                duration: 60,
+                ..Default::default()
+            },
+            body: AssociationRequestBody {
+                capabilities_info: CapabilitiesInformation::new().with_is_ess(true),
+                listen_interval: 0,
+                elements: element_chain! {
+                    SSIDElement::new(bss.ssid.as_str()).ok_or(StaError::InvalidBss)?,
+                    DEFAULT_SUPPORTED_RATES,
+                    DEFAULT_XRATES
                 },
-                0,
-                false,
-            )
-            .map_err(|_| StaError::TxBufferTooSmall)?;
-
-        let _ = self
-            .sta_tx_rx
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: phy_rate,
-                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
-                },
-                true,
-            )
-            .await;
-        let Ok(received) = with_timeout(timeout, self.rx_queue.receive()).await else {
-            debug!("Association timed out.");
-            return Err(StaError::ResponseTimeout);
+                _phantom: PhantomData,
+            },
         };
-        let Ok(assoc_response) = received.mpdu_buffer().pread::<AssociationResponseFrame>(0) else {
+        let response = self
+            .do_bidirectional_connection_step(assoc_request_frame, timeout, phy_rate, retries)
+            .await?;
+        let Ok(assoc_response) = response.mpdu_buffer().pread::<AssociationResponseFrame>(0) else {
             debug!(
                 "Failed to associate with {}, frame deserialization failed.",
                 bss.bssid
@@ -172,7 +165,10 @@ impl ConnectionOperation<'_, '_> {
         };
         if let Some(aid) = assoc_response.association_id {
             if assoc_response.status_code == IEEE80211StatusCode::Success {
-                debug!("Successfuly associated with {}, AID: {:?}.", bss.bssid, aid);
+                debug!(
+                    "Successfully associated with {}, AID: {:?}.",
+                    bss.bssid, aid
+                );
                 return Ok(aid);
             }
         }
@@ -182,29 +178,9 @@ impl ConnectionOperation<'_, '_> {
         );
         Err(StaError::AssociationFailure(assoc_response.status_code))
     }
-    pub async fn run(
-        self,
-        bss: &BSS,
-        timeout: Duration,
-        mac_address: MACAddress,
-        phy_rate: WiFiRate,
-    ) -> Result<AssociationID, StaError> {
-        debug!(
-            "Connecting to {} on channel {} with MAC address {}.",
-            bss.bssid, bss.channel, mac_address
-        );
-        let bringup_operation = self
-            .sta_tx_rx
-            .interface_control
-            .begin_interface_bringup_operation(bss.channel)
-            .map_err(StaError::LMacError)?;
-        let operation = self
-            .sta_tx_rx
-            .rx_router
-            .begin_scoped_operation(self.router_queue, Operation::Connecting(mac_address))
-            .await;
+    fn configure_rx_filters(&self, bss: &BSS, mac_address: MACAddress) {
+        // Here we set and enable the BSSID and RA filters.
 
-        // Just to make sure, these are set for connection.
         self.sta_tx_rx.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
             *mac_address,
@@ -221,14 +197,62 @@ impl ConnectionOperation<'_, '_> {
         self.sta_tx_rx
             .interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
+    }
+    pub async fn run(
+        self,
+        bss: &BSS,
+        timeout: Duration,
+        mac_address: MACAddress,
+        phy_rate: WiFiRate,
+        retries: usize,
+    ) -> Result<AssociationID, StaError> {
+        debug!(
+            "Connecting to {} on channel {} with MAC address {}.",
+            bss.bssid, bss.channel, mac_address
+        );
+        // Start the bringup operation for LMAC channel lock.
+        let bringup_operation = self
+            .sta_tx_rx
+            .interface_control
+            .begin_interface_bringup_operation(bss.channel)
+            .map_err(StaError::LMacError)?;
 
-        self.do_auth(bss, timeout, mac_address, phy_rate).await?;
-        let aid = self.do_assoc(bss, timeout, mac_address, phy_rate).await?;
+        // Start the RX router operation, so that authentication and association frames are routed
+        // to us for the duration of the connection bringup.
+        // NOTE: If further protocol negotiations, like RSN, TDLS, FT etc. are added in the future,
+        // the match statement in the RX router will have to be expanded, to route those frames
+        // too.
+        let rx_router_operation = self
+            .sta_tx_rx
+            .rx_router
+            .begin_scoped_operation(self.router_queue, Operation::Connecting(mac_address))
+            .await;
+
+        // Configure the RX filters to the specified addresses, so that we actually receive frames
+        // from the AP.
+        self.configure_rx_filters(bss, mac_address);
+
+        // Try to authenticate with the AP.
+        self.do_auth(bss, timeout, mac_address, phy_rate, retries)
+            .await?;
+
+        // Try to associate with the AP.
+        let aid = self
+            .do_assoc(bss, timeout, mac_address, phy_rate, retries)
+            .await?;
+
+        // Because RSN isn't implemented right now, there's nothing more to do here and we've
+        // connected Successfully, so we mark the
+        // operations as completed.
+        // NOTE: This doesn't actually do anything for the RX router, except consuming the
+        // operation and therefore invoking the drop code. We mark it as completed anyway, since
+        // that's more explicit and easier to read.
 
         bringup_operation.complete();
-        operation.complete();
-
-        self.defuse();
+        rx_router_operation.complete();
+        // By marking the connection operation as completed, we forget self and therefore the drop
+        // code never gets executed and the filter configuration remains in place.
+        self.complete();
 
         Ok(aid)
     }

@@ -128,7 +128,7 @@ pub async fn scan<const MAX_BSS: usize>(
         ScanStrategy::Custom(channels) => channels,
     };
     debug!("ESS scan started. Scanning channels: {:?}", channels);
-    // Setup scanning mode, by configuring the RX router, setting the scanning mode and clearing
+    // Setup scanning mode, by configuring the RX router to route beacons to us, setting the scanning mode and clearing
     // the RX queue, so every frame received after this is a beacon.
     let router_operation = sta_tx_rx
         .rx_router

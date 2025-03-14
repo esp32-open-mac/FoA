@@ -134,6 +134,7 @@ impl StaControl<'_, '_> {
             timeout.unwrap_or(DEFAULT_TIMEOUT),
             self.mac_address,
             self.sta_tx_rx.phy_rate(),
+            4,
         )
         .await?;
         self.sta_tx_rx
