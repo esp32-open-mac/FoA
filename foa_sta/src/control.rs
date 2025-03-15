@@ -10,6 +10,7 @@ use ieee80211::{
 };
 
 use foa::{esp_wifi_hal::WiFiRate, ReceivedFrame};
+use rand_core::RngCore;
 
 use crate::{
     operations::{
@@ -54,23 +55,36 @@ impl BSS {
 }
 
 /// This provides control over the STA interface.
-pub struct StaControl<'foa, 'vif> {
+pub struct StaControl<'foa, 'vif, Rng: RngCore> {
     // Low level RX/TX.
     pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Misc.
     pub(crate) mac_address: MACAddress,
+    /// Entropy source for the STA implementation.
+    pub(crate) rng: Rng,
 }
-impl StaControl<'_, '_> {
+impl<Rng: RngCore> StaControl<'_, '_, Rng> {
     /// Set the MAC address for the STA interface.
-    pub async fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
+    pub fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
         if self.sta_tx_rx.connection_state.connection_info().is_some() {
             Err(StaError::StillConnected)
         } else {
             self.mac_address = MACAddress::new(mac_address);
             Ok(())
         }
+    }
+    /// Randomize the MAC address with the .
+    ///
+    /// This will also return the MAC address.
+    pub fn randomize_mac_address(&mut self) -> Result<MACAddress, StaError> {
+        let mut mac_address = [0x00; 6];
+        self.rng.fill_bytes(mac_address.as_mut_slice());
+        // By clearing the LSB of the first octet, we ensure that the local bit isn't set.
+        mac_address[0] &= !(1);
+        self.set_mac_address(mac_address)
+            .map(|_| MACAddress::new(mac_address))
     }
 
     /// Scan for networks.

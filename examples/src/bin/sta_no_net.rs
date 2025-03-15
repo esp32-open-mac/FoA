@@ -53,7 +53,7 @@ async fn main(spawner: Spawner) {
     let (mut sta_control, sta_runner, _net_device) = foa_sta::new_sta_interface(
         mk_static!(VirtualInterface<'static>, sta_vif),
         sta_resources,
-        None,
+        Rng::new(peripherals.RNG),
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 

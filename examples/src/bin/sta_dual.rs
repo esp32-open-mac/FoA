@@ -20,8 +20,6 @@ use esp_println as _;
 use foa::{FoAResources, FoARunner};
 use foa_sta::{StaNetDevice, StaResources, StaRunner};
 
-use rand_core::RngCore;
-
 extern crate alloc;
 use alloc::boxed::Box;
 
@@ -103,15 +101,15 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(foa_task(foa_runner)).unwrap();
 
-    let mut mac_address = [0u8; 6];
-    let mut rng = Rng::new(peripherals.RNG);
+    let rng = Rng::new(peripherals.RNG);
 
     let mut stas = [vif_0, vif_1].map(|vif| {
-        rng.fill_bytes(mac_address.as_mut_slice());
         let sta_resources = Box::new(StaResources::new());
+
         let vif = Box::new(vif);
+
         let (sta_control, sta_runner, sta_net_device) =
-            foa_sta::new_sta_interface(Box::leak(vif), Box::leak(sta_resources), Some(mac_address));
+            foa_sta::new_sta_interface(Box::leak(vif), Box::leak(sta_resources), rng.clone());
         spawner.spawn(sta_task(sta_runner)).unwrap();
         (sta_control, sta_net_device)
     });

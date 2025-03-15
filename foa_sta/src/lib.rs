@@ -42,6 +42,7 @@ mod control;
 pub use control::*;
 
 mod runner;
+use rand_core::RngCore;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
@@ -208,17 +209,17 @@ impl Default for StaResources<'_> {
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
 /// Initialize a new STA interface.
-pub fn new_sta_interface<'foa: 'vif, 'vif>(
+pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
     virtual_interface: &'vif mut VirtualInterface<'foa>,
     resources: &'vif mut StaResources<'foa>,
-    mac_address: Option<[u8; 6]>,
+    rng: Rng,
 ) -> (
-    StaControl<'foa, 'vif>,
+    StaControl<'foa, 'vif, Rng>,
     StaRunner<'foa, 'vif>,
     StaNetDevice<'vif>,
 ) {
     let (interface_control, interface_rx_queue) = virtual_interface.split();
-    let mac_address = mac_address.unwrap_or(interface_control.get_factory_mac_for_interface());
+    let mac_address = interface_control.get_factory_mac_for_interface();
     // Initialize embassy_net.
     let (net_runner, net_device) = ch::new(
         &mut resources.channel_state,
@@ -246,6 +247,7 @@ pub fn new_sta_interface<'foa: 'vif, 'vif>(
             sta_tx_rx,
             mac_address: MACAddress::new(mac_address),
             rx_queue: &resources.user_queue,
+            rng,
         },
         StaRunner {
             tx_runner,

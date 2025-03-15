@@ -8,7 +8,6 @@ use embassy_net::{
     tcp::client::{TcpClient, TcpClientState},
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
-use embassy_time::Duration;
 use embedded_io_async::Read;
 use esp_backtrace as _;
 use esp_hal::{
@@ -20,7 +19,6 @@ use esp_hal::{
 use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
 use foa_sta::{StaNetDevice, StaResources, StaRunner};
-use rand_core::RngCore;
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
 const SSID: &str = env!("SSID");
@@ -66,20 +64,11 @@ async fn main(spawner: Spawner) {
     let (mut sta_control, sta_runner, net_device) = foa_sta::new_sta_interface(
         mk_static!(VirtualInterface<'static>, sta_vif),
         sta_resources,
-        None,
+        Rng::new(peripherals.RNG),
     );
-    extern "C" {
-        fn phy_set_most_tpw(power: u8);
-    }
-    unsafe {
-        phy_set_most_tpw(84);
-    }
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
-    let mut mac_address = [0u8; 6];
-    Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
-    mac_address[0] &= !(1);
-    sta_control.set_mac_address(mac_address).await.unwrap();
+    let _ = sta_control.randomize_mac_address();
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
     let (net_stack, net_runner) = embassy_net::new(

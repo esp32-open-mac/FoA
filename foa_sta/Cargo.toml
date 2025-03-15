@@ -17,6 +17,7 @@ foa = { path = "../foa/" }
 heapless = "0.8.0"
 ieee80211 = { version = "0.5.4", default-features = false }
 llc-rs = "0.1.0"
+rand_core = "0.6.0"
 
 [build-dependencies]
 esp-config = { version = "0.3.1", features = ["build"] }

@@ -6,7 +6,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join3;
 
 use esp_backtrace as _;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println as _;
 
 use foa::FoAResources;
@@ -35,9 +35,9 @@ async fn main(_spawner: Spawner) {
         peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
-    let mut sta_resources = StaResources::default();
+    let mut sta_resources = mk_static!(StaResources, StaResources::default());
     let (mut sta_control, mut sta_runner, _net_device) =
-        foa_sta::new_sta_interface(&mut sta_vif, &mut sta_resources, None);
+        foa_sta::new_sta_interface(&mut sta_vif, &mut sta_resources, Rng::new(peripherals.RNG));
     join3(foa_runner.run(), sta_runner.run(), async {
         let mut found_bss = heapless::Vec::new();
         let _ = sta_control.scan::<32>(None, &mut found_bss).await;

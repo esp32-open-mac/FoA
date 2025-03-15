@@ -17,8 +17,6 @@ use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
 use foa_sta::{StaNetDevice, StaResources, StaRunner};
 
-use rand_core::RngCore;
-
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
@@ -62,14 +60,11 @@ async fn main(spawner: Spawner) {
     let (mut sta_control, sta_runner, net_device) = foa_sta::new_sta_interface(
         mk_static!(VirtualInterface<'static>, sta_vif),
         sta_resources,
-        None,
+        Rng::new(peripherals.RNG),
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
-    let mut mac_address = [0u8; 6];
-    Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
-    mac_address[0] &= !(1);
-    sta_control.set_mac_address(mac_address).await.unwrap();
+    let mac_address = sta_control.randomize_mac_address().unwrap();
     info!("Using MAC address: {:#x}", mac_address);
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
