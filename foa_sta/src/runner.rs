@@ -94,10 +94,6 @@ impl ConnectionRunner<'_, '_> {
             {
                 Either3::First(off_channel_request) => {
                     off_channel_request.grant();
-                    self.sta_tx_rx
-                        .interface_control
-                        .wait_for_off_channel_completion()
-                        .await;
                 }
                 Either3::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout),
                 Either3::Third(_) => {
@@ -125,6 +121,11 @@ impl ConnectionRunner<'_, '_> {
     async fn run_msdu_tx(tx_runner: &mut TxRunner<'_, MTU>, sta_tx_rx: &StaTxRx<'_, '_>) -> ! {
         loop {
             let msdu = tx_runner.tx_buf().await;
+            // We don't want to accidentally transmit a MSDU, while we're not on channel.
+            sta_tx_rx
+                .interface_control
+                .wait_for_off_channel_completion()
+                .await;
             let Some(connection_info) = sta_tx_rx.connection_state.connection_info() else {
                 continue;
             };
@@ -262,7 +263,7 @@ impl RoutingRunner<'_, '_> {
     async fn run(&mut self) -> ! {
         loop {
             let borrowed_buffer = self.interface_rx_queue.receive().await;
-            // We create a generic_frame, to do matching.
+            // We create a generic frame, to do matching.
             let Ok(generic_frame) = GenericFrame::new(borrowed_buffer.mpdu_buffer(), false) else {
                 continue;
             };
@@ -284,11 +285,26 @@ impl RoutingRunner<'_, '_> {
                     }
                 }
             }
+            // We won't process any frames, while another interface is doing an off channel
+            // operation.
+            if !self.sta_tx_rx.in_off_channel_operation()
+                && self
+                    .sta_tx_rx
+                    .interface_control
+                    .off_channel_operation_in_progress()
+            {
+                continue;
+            }
             // To reduce latency, we process all data frames here directly.
             if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type() {
                 let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
                     continue;
                 };
+                // We don't want to process data frames during an off channel operation, since
+                // otherwise it would be possible to inject frames on other channels.
+                if self.sta_tx_rx.in_off_channel_operation() {
+                    continue;
+                }
                 Self::handle_data_rx(
                     &mut self.rx_runner,
                     data_frame,

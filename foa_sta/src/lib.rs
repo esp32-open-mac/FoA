@@ -164,6 +164,11 @@ impl StaTxRx<'_, '_> {
     pub fn set_phy_rate(&self, phy_rate: WiFiRate) {
         self.phy_rate.set(phy_rate);
     }
+    /// Check if we are currently performing an off channel operation.
+    pub fn in_off_channel_operation(&self) -> bool {
+        self.interface_control.off_channel_operation_interface()
+            == Some(self.interface_control.get_filter_interface())
+    }
 }
 
 pub(crate) const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX_QUEUE_LEN");

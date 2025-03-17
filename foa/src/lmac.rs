@@ -606,6 +606,12 @@ impl<'res> LMacInterfaceControl<'res> {
             .get_channel_state()
             .is_off_channel_operation_in_progress()
     }
+    /// Returns the ID of the interface currently performing an off channel operation.
+    pub fn off_channel_operation_interface(&self) -> Option<usize> {
+        self.shared_state
+            .get_channel_state()
+            .off_channel_operation_interface
+    }
     /// Returns the id of the filter interface.
     pub fn get_filter_interface(&self) -> usize {
         self.rx_filter_interface
