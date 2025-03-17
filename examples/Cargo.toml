@@ -20,6 +20,7 @@ embassy-futures = { version = "0.1.1", features = ["defmt"] }
 
 foa = { path = "../foa", features = ["defmt"] }
 foa_sta = { path = "../foa_sta", features = ["defmt"] }
+foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
 
 static_cell = "2.1.0"
 heapless = "0.8.0"
@@ -45,5 +46,5 @@ opt-level = 's'
 overflow-checks = false
 
 [features]
-esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32", "foa/esp32"]
-esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2", "foa/esp32s2"]
+esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32"]
+esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2"]
