@@ -23,9 +23,6 @@ rand_core = "0.6.0"
 esp-config = { version = "0.3.1", features = ["build"] }
 
 [features]
-esp32 = ["foa/esp32"]
-esp32s2 = ["foa/esp32s2"]
-
 log = ["defmt-or-log/log"]
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 
