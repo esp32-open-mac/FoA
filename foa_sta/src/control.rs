@@ -75,16 +75,15 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
             Ok(())
         }
     }
-    /// Randomize the MAC address with the .
+    /// Randomize the MAC address.
     ///
     /// This will also return the MAC address.
-    pub fn randomize_mac_address(&mut self) -> Result<MACAddress, StaError> {
+    pub fn randomize_mac_address(&mut self) -> Result<[u8; 6], StaError> {
         let mut mac_address = [0x00; 6];
         self.rng.fill_bytes(mac_address.as_mut_slice());
         // By clearing the LSB of the first octet, we ensure that the local bit isn't set.
         mac_address[0] &= !(1);
-        self.set_mac_address(mac_address)
-            .map(|_| MACAddress::new(mac_address))
+        self.set_mac_address(mac_address).map(|_| mac_address)
     }
 
     /// Scan for networks.

@@ -530,9 +530,9 @@ dependencies = [
 
 [[package]]
 name = "esp-wifi-hal"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b388d1deaadbf2db375091f51f4c1b7f368e4793a4323dcb284116ca6f52163a"
+checksum = "84ac4c1adf315e841418396ddb10e88ca67dbcfaed304417c31f8d93a5ea5fce"
 dependencies = [
  "bitfield-struct",
  "cfg-if",
@@ -726,9 +726,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.26"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "macro-bits"

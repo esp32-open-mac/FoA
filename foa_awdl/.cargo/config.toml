@@ -1,3 +1,7 @@
 [unstable]
 build-std = ["core"]
 
+[build]
+rustflags = [
+  "-C", "link-arg=-Tdefmt.x"
+]

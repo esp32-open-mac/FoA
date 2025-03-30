@@ -45,8 +45,6 @@ impl DerefMut for TxBuffer<'_> {
 }
 impl Drop for TxBuffer<'_> {
     fn drop(&mut self) {
-        /// If the `clear_tx_buffers` feature is enabled, we clear the buffer before returning it.
-        #[cfg(feature = "clear_tx_buffers")]
         self.fill(0);
         // We ignore the result here, since this can't fail, because we previously took this buffer
         // out from the queue, so the [free_capacity](channel::Channel::free_capacity) is always

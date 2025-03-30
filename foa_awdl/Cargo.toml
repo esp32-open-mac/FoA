@@ -15,11 +15,19 @@ defmt = { version = "0.3.10", optional = true }
 awdl-frame-parser = { git = "https://github.com/Frostie314159/awdl-frame-parser.git" }
 defmt-or-log = { version = "0.2.1", default-features = false }
 esp-config = "0.3.1"
+embassy-net-driver-channel = "0.3.0"
+llc-rs = "0.1.0"
+ethernet = { version = "0.1.5", default-features = false }
+ether-type = "0.1.3"
+smoltcp = { version = "0.12.0", default-features = false, features = ["medium-ethernet", "proto-ipv6", "socket-raw"] }
 
 [build-dependencies]
 esp-config = { version = "0.3.1", features = ["build"] }
 
 [features]
+esp32 = ["foa/esp32"]
+esp32s2 = ["foa/esp32s2"]
+
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 log = ["defmt-or-log/log"]
 
