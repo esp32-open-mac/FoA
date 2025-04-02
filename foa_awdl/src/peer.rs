@@ -322,7 +322,7 @@ impl ElectionState {
         master_election_state: &ElectionState,
     ) {
         self.master_metric = master_election_state.master_metric;
-        self.master_counter = master_election_state.master_counter;
+        self.master_counter = Some(master_election_state.master_counter.unwrap_or(0));
         self.distance_to_master = master_election_state.distance_to_master + 1;
         self.root_peer = master_election_state.root_peer;
         self.sync_peer = Some(*master_address);

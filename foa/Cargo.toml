@@ -7,8 +7,8 @@ edition = "2021"
 embassy-sync = "0.6.0"
 embassy-futures = "0.1.1"
 
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", package = "esp-hal" }
-esp-wifi-hal = { path = "../../esp-wifi-hal/esp-wifi-hal" }
+esp-hal = "1.0.0-beta.0"
+esp-wifi-hal = "0.1.0-alpha.3"
 static_cell = "2.1.0"
 critical-section = "1.2.0"
 portable-atomic = "1.10.0"
