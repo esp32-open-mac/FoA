@@ -6,17 +6,19 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "1.0.0-beta.0"
-esp-hal-embassy = "0.7.0"
+esp-hal = { git = "https://github.com/esp-rs/esp-hal" }
+esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal" }
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", features = [] }
-esp-backtrace = { version = "0.15.0", features = [
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", features = [
     "panic-handler",
     "defmt"
 ] }
-esp-println = { version = "0.13.0", features = ["defmt-espflash", "critical-section", "uart"], default-features = false }
+esp-println = { git = "https://github.com/esp-rs/esp-hal", features = ["defmt-espflash", "critical-section", "uart"], default-features = false }
 
-embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns", "defmt"] }
+embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns", "defmt", "packet-trace"] }
 embassy-futures = { version = "0.1.1", features = ["defmt"] }
+embassy-time = { version = "0.4.0", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "defmt"] }
 
 foa = { path = "../foa", features = ["defmt"] }
 foa_sta = { path = "../foa_sta", features = ["defmt"] }
@@ -24,12 +26,12 @@ foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
 
 static_cell = "2.1.0"
 heapless = "0.8.0"
-reqwless = { git = "https://github.com/drogue-iot/reqwless.git", default-features = false }
 embedded-io-async = "0.6.1"
-embassy-time = { version = "0.4.0", features = ["defmt"] }
-embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "defmt"] }
 
 defmt = "0.3.10"
+reqwless = { git = "https://github.com/Frostie314159/reqwless.git", version = "0.13.0", branch = "ipv6-url", features = ["embedded-tls", "defmt"] }
+rand_core = "0.9.3"
+embedded-io = "0.6.1"
 
 [profile.dev]
 # Rust debug is too slow.
@@ -46,5 +48,5 @@ opt-level = 's'
 overflow-checks = false
 
 [features]
-esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32"]
-esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2"]
+esp32 = ["esp-hal/esp32", "esp-hal-embassy/esp32", "esp-println/esp32", "esp-backtrace/esp32", "foa/esp32", "foa_sta/esp32", "foa_awdl/esp32"]
+esp32s2 = ["esp-hal/esp32s2", "esp-hal-embassy/esp32s2", "esp-println/esp32s2", "esp-backtrace/esp32s2", "foa/esp32s2", "foa_sta/esp32s2", "foa_awdl/esp32s2"]
