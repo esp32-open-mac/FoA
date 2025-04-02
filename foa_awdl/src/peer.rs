@@ -1,11 +1,10 @@
-use core::{cell::RefCell, num::NonZero};
+use core::num::NonZero;
 
-use crate::PEER_CACHE_SIZE;
 use awdl_frame_parser::{
     action_frame::DefaultAWDLActionFrame,
     common::{AWDLDnsCompression, ReadLabelIterator},
     tlvs::{
-        dns_sd::ServiceResponseTLV,
+        dns_sd::{dns_record::AWDLDnsRecord, ServiceResponseTLV},
         sync_elect::{
             channel::{Band, ChannelBandwidth, LegacyFlags, SupportChannel},
             channel_sequence::ChannelSequence,
@@ -15,35 +14,49 @@ use awdl_frame_parser::{
     },
 };
 use defmt_or_log::debug;
-use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_time::{Duration, Instant};
-use heapless::FnvIndexMap;
 use ieee80211::{
     common::TU,
     mac_parser::{MACAddress, ZERO},
 };
 
+/// The state of overlapping slots between us and a peer.
+pub enum OverlapSlotState {
+    /// No slots overlap.
+    NoOverlappingSlots,
+    /// The peer isn't in cache
+    PeerNotInCache,
+    /// The slots currently overlap.
+    CurrentlyOverlapping,
+    /// The slots will overlap at the specified timestamp.
+    OverlappingAt(Instant),
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The time sync state of a peer.
 pub struct SynchronizationState {
     pub channel_sequence: [u8; 16],
     /// The epoch of the TSF of the peer, relative to our system time. Unit: µs since boot.
     pub tsf_epoch_in_us: i64,
 }
 impl SynchronizationState {
+    /// The amount of availability windows per slot.
     pub(crate) const AW_PER_SLOT: usize = 4;
+    /// The amount of time units per availability window.
     pub(crate) const TU_PER_AW: usize = 16;
+    /// The amount of slots per channel sequence.
     pub(crate) const SLOTS_PER_CHANNEL_SEQUENCE: usize = 16;
+    /// The duration of a time unit as an [embassy_time::Duration].
     pub(crate) const TU_IN_EMBASSY_TIME: Duration = Duration::from_micros(TU.as_micros() as u64);
+    /// The duration of an availability window in microseconds.
     pub(crate) const AW_DURATION_IN_US: u64 =
         Self::TU_IN_EMBASSY_TIME.as_micros() * Self::TU_PER_AW as u64;
-    pub(crate) const CHANNEL_SEQUENCE_DURATION: Duration = Duration::from_micros(
-        Self::TU_IN_EMBASSY_TIME.as_micros()
-            * Self::SLOTS_PER_CHANNEL_SEQUENCE as u64
-            * Self::AW_PER_SLOT as u64
-            * Self::TU_PER_AW as u64,
-    );
+    /// The duration of one slot, consisting of one AW and three EAWs.
     pub(crate) const SLOT_DURATION: Duration =
         Duration::from_micros((Self::AW_PER_SLOT * Self::TU_PER_AW) as u64 * TU.as_micros() as u64);
+    /// The duration of an entire channel sequence.
+    pub(crate) const CHANNEL_SEQUENCE_DURATION: Duration = Duration::from_micros(
+        Self::SLOT_DURATION.as_micros() * Self::SLOTS_PER_CHANNEL_SEQUENCE as u64,
+    );
 
     /// Uninitialized synchronization state.
     ///
@@ -181,7 +194,9 @@ impl SynchronizationState {
         let elapsed_since_chan_seq_start = Duration::from_micros(
             duration_since_epoch.as_micros() % Self::CHANNEL_SEQUENCE_DURATION.as_micros(),
         );
-        let channel_sequence_start_timestamp = now - elapsed_since_chan_seq_start;
+        // We emulate saturating subtraction here.
+        let channel_sequence_start_timestamp =
+            now.checked_sub(elapsed_since_chan_seq_start).unwrap_or(now);
         let time_to_slot_from_zero = Self::SLOT_DURATION * slot as u32 + offset;
         channel_sequence_start_timestamp
             + if elapsed_since_chan_seq_start > time_to_slot_from_zero {
@@ -384,25 +399,10 @@ pub struct AwdlPeer {
     pub election_state: ElectionState,
     /// The timestamp when the last frame was received from this peer.
     pub last_frame: Instant,
-    pub is_airdrop: bool,
-    pub is_airplay: bool,
+    pub airdrop_port: Option<u16>,
+    pub airplay_port: Option<u16>,
 }
 impl AwdlPeer {
-    /*
-    fn extract_hostname_from_af(
-        awdl_action_body: &DefaultAWDLActionFrame,
-    ) -> Option<heapless::String<256>> {
-        awdl_action_body
-            .tagged_data
-            .get_first_tlv::<DefaultArpaTLV>()
-            .and_then(|tlv| tlv.arpa.labels.clone().next().as_deref().cloned())
-            .map(|hostname| {
-                let mut string = heapless::String::new();
-                let _ = string.push_str(hostname);
-                string
-            })
-    }
-    */
     /// Create a peer with the data from an action frame.
     pub(crate) fn new_with_action_frame(
         awdl_action_body: &DefaultAWDLActionFrame<'_>,
@@ -412,17 +412,19 @@ impl AwdlPeer {
             synchronization_state: SynchronizationState::from_af(awdl_action_body, rx_timestamp)?,
             election_state: ElectionState::from_af(awdl_action_body)?,
             last_frame: Instant::now(),
-            is_airdrop: false,
-            is_airplay: false,
+            airdrop_port: None,
+            airplay_port: None,
         })
     }
     /// Update the peer with the information from the provided action frame.
+    ///
+    /// The returned bool indicates, whether services were discovered.
     pub(crate) fn update(
         &mut self,
         transmitter: MACAddress,
         awdl_action_body: &DefaultAWDLActionFrame<'_>,
         rx_timestamp: Instant,
-    ) {
+    ) -> bool {
         self.last_frame = Instant::now();
         if let Some(synchronization_state) =
             SynchronizationState::from_af(awdl_action_body, rx_timestamp)
@@ -441,176 +443,23 @@ impl AwdlPeer {
         if let Some(election_state) = ElectionState::from_af(awdl_action_body) {
             self.election_state = election_state;
         }
+        let mut service_discovered = false;
         for service_response in awdl_action_body
             .tagged_data
             .get_tlvs::<ServiceResponseTLV<'_, ReadLabelIterator<'_>>>()
         {
-            match service_response.name.domain {
-                AWDLDnsCompression::AirPlayTcpLocal => {
-                    self.is_airplay = true;
+            if let AWDLDnsRecord::SRV { port, .. } = service_response.record {
+                let protocol_port_ref = match service_response.name.domain {
+                    AWDLDnsCompression::AirPlayTcpLocal => &mut self.airplay_port,
+                    AWDLDnsCompression::AirDropTcpLocal => &mut self.airdrop_port,
+                    _ => continue,
+                };
+                if protocol_port_ref.is_none() {
+                    *protocol_port_ref = Some(port);
+                    service_discovered = true;
                 }
-                AWDLDnsCompression::AirDropTcpLocal => {
-                    self.is_airdrop = true;
-                }
-                _ => {}
             }
         }
-        /*
-                let hostname = Self::extract_hostname_from_af(awdl_action_body);
-                if self.hostname.is_none() {
-                    if let Some(hostname) = Self::extract_hostname_from_af(awdl_action_body) {
-                        debug!(
-                            "Found hostname: {} for peer: {}.",
-                            hostname.as_str(),
-                            transmitter
-                        );
-                        self.hostname = Some(hostname);
-                    }
-                }
-        */
-    }
-}
-
-/// The peer cache is full, so no peer could be added.
-pub(crate) struct PeerCacheFullError;
-/// The state of overlapping slots between us and a peer.
-pub(crate) enum OverlapSlotState {
-    /// No slots overlap.
-    NoOverlappingSlots,
-    /// The peer isn't in cache
-    PeerNotInCache,
-    /// The slots currently overlap.
-    CurrentlyOverlapping,
-    /// The slots will overlap at the specified timestamp.
-    OverlappingAt(Instant),
-}
-/// A statically allocated cache of AWDL peers.
-pub(crate) struct StaticAwdlPeerCache {
-    peers: NoopMutex<RefCell<FnvIndexMap<MACAddress, AwdlPeer, PEER_CACHE_SIZE>>>,
-}
-impl StaticAwdlPeerCache {
-    /// Create a new peer cache.
-    pub const fn new() -> Self {
-        Self {
-            peers: NoopMutex::new(RefCell::new(FnvIndexMap::new())),
-        }
-    }
-    /// Modify the peer, or attempt to add it if it's not present.
-    ///
-    /// If the peer cache is full a [PeerCacheFullError].
-    pub fn modify_or_add_peer<I: FnOnce(&mut AwdlPeer), A: FnOnce() -> Option<AwdlPeer>>(
-        &self,
-        address: &MACAddress,
-        inspect: I,
-        add: A,
-    ) -> Result<(), PeerCacheFullError> {
-        self.peers.lock(|peers| {
-            let mut peers = peers.borrow_mut();
-            match peers.get_mut(address) {
-                Some(peer) => (inspect)(peer),
-                None => {
-                    if peers.len() != peers.capacity() {
-                        let Some(peer) = (add)() else { return Ok(()) };
-                        let _ = peers.insert(*address, peer);
-                    } else {
-                        return Err(PeerCacheFullError);
-                    }
-                }
-            };
-            Ok(())
-        })
-    }
-    /// Inspect the specified peer.
-    ///
-    /// If the peer is not present [None] will be returned.
-    pub fn inspect_peers(&self, mut f: impl FnMut(&MACAddress, &AwdlPeer)) {
-        self.peers.lock(|peers| {
-            peers
-                .borrow()
-                .iter()
-                .for_each(|(address, peer)| (f)(address, peer));
-        })
-    }
-    /*
-    /// Inspect a specific peer.
-    pub fn inspect_peer<O>(
-        &self,
-        address: &MACAddress,
-        f: impl FnOnce(&AwdlPeer) -> O,
-    ) -> Option<O> {
-        self.peers.lock(|peers| peers.borrow().get(address).map(f))
-    }
-    */
-    /// Remove all peers, from which we haven't received a frame within the specified timeout.
-    pub fn purge_stale_peers(&self, timeout: Duration) {
-        self.peers.lock(|peers| {
-            peers.borrow_mut().retain(|address, peer| {
-                let retain_peer = peer.last_frame.elapsed() < timeout;
-                if !retain_peer {
-                    debug!("Removing {} from peer cache due to inactivity.", address);
-                }
-                retain_peer
-            })
-        });
-    }
-    /// Remove all peers from the cache.
-    pub fn clear(&self) {
-        self.peers.lock(|peers| peers.borrow_mut().clear());
-    }
-    /// Find the master from the current peer cache.
-    ///
-    /// If we're master None will be returned.
-    pub fn find_master(
-        &self,
-        self_election_state: &ElectionState,
-        address: &MACAddress,
-    ) -> Option<(MACAddress, ElectionState, SynchronizationState)> {
-        self.peers.lock(|peers| {
-            let peers = peers.borrow_mut();
-            let mut most_eligible_peer = (address, self_election_state);
-
-            for current_peer in peers
-                .iter()
-                .map(|(address, peer)| (address, &peer.election_state))
-            {
-                if most_eligible_peer.1.is_more_eligible(current_peer.1) {
-                    most_eligible_peer = current_peer;
-                }
-            }
-            if most_eligible_peer.0 == address {
-                None
-            } else {
-                Some((
-                    *most_eligible_peer.0,
-                    *most_eligible_peer.1,
-                    peers[most_eligible_peer.0].synchronization_state,
-                ))
-            }
-        })
-    }
-    /// Check if the specified peer is in cache.
-    pub fn is_peer_in_cache(&self, address: &MACAddress) -> bool {
-        self.peers
-            .lock(|peers| peers.borrow().contains_key(address))
-    }
-    /// Get the nearest common slot with the peer.
-    pub fn get_common_slot_for_peer(
-        &self,
-        address: &MACAddress,
-        synchronization_state: &SynchronizationState,
-    ) -> OverlapSlotState {
-        self.peers.lock(|peers| {
-            let peers = peers.borrow();
-            if address.is_multicast() {
-                OverlapSlotState::OverlappingAt(
-                    synchronization_state.multicast_slot_start_timestamp(),
-                )
-            } else if let Some(peer) = peers.get(address) {
-                peer.synchronization_state
-                    .next_overlap_timestamp(synchronization_state)
-            } else {
-                OverlapSlotState::PeerNotInCache
-            }
-        })
+        service_discovered
     }
 }

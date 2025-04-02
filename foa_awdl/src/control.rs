@@ -8,8 +8,9 @@ use rand_core::RngCore;
 use crate::{
     hw_address_to_ipv6,
     peer::AwdlPeer,
+    peer_cache::AwdlPeerCache,
     state::{AwdlState, CommonResources},
-    AwdlError, AWDL_BSSID, PEER_CACHE_SIZE,
+    AwdlError, AWDL_BSSID,
 };
 
 /// Control interface for the AWDL interface.
@@ -58,7 +59,7 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
         self.common_resources
             .state_signal
             .signal(AwdlState::Active {
-                mac_address: self.mac_address,
+                our_address: self.mac_address,
                 channel: self.channel,
             });
         bringup_operation.complete();
@@ -104,30 +105,10 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     }
     /// Get the IPv6 address of this interface.
     pub fn own_ipv6_addr(&self) -> Ipv6Addr {
-        hw_address_to_ipv6(self.mac_address)
+        hw_address_to_ipv6(&self.mac_address)
     }
-    fn get_peer_addresses_internal(
-        &self,
-        mut filter: impl FnMut(&AwdlPeer) -> bool,
-    ) -> heapless::Vec<Ipv6Addr, PEER_CACHE_SIZE> {
-        let mut peer_addresses = heapless::Vec::new();
+    pub fn inspect_peers(&self, f: impl FnMut((&MACAddress, &AwdlPeer))) {
         self.common_resources
-            .peer_cache
-            .inspect_peers(|address, peer| {
-                if (filter)(peer) {
-                    let _ = peer_addresses.push(hw_address_to_ipv6(*address));
-                }
-            });
-        peer_addresses
-    }
-    /// Get the IPv6 addresses of all currently known peers.
-    pub fn get_peer_addresses(&self) -> heapless::Vec<Ipv6Addr, PEER_CACHE_SIZE> {
-        self.get_peer_addresses_internal(|_| true)
-    }
-    pub fn get_airplay_peer_addresses(&self) -> heapless::Vec<Ipv6Addr, PEER_CACHE_SIZE> {
-        self.get_peer_addresses_internal(|peer| peer.is_airplay)
-    }
-    pub fn get_airdrop_peer_addresses(&self) -> heapless::Vec<Ipv6Addr, PEER_CACHE_SIZE> {
-        self.get_peer_addresses_internal(|peer| peer.is_airdrop)
+            .lock_peer_cache(move |peer_cache| peer_cache.inspect_peers(f));
     }
 }

@@ -3,18 +3,20 @@
 use core::net::Ipv6Addr;
 
 use embassy_net_driver_channel::driver::HardwareAddress;
+use embassy_sync::channel::DynamicReceiver;
 use esp_config::esp_config_int;
 use foa::{esp_wifi_hal::RxFilterBank, VirtualInterface};
 use ieee80211::mac_parser::MACAddress;
 use rand_core::RngCore;
-use runner::{AwdlManagementRunner, AwdlMsduTxRunner};
 
 mod control;
+mod event;
 mod peer;
+mod peer_cache;
 mod runner;
 mod state;
 
-pub use {control::AwdlControl, runner::AwdlRunner, state::AwdlResources};
+pub use {control::AwdlControl, event::AwdlEvent, runner::AwdlRunner, state::AwdlResources};
 
 const AWDL_BSSID: MACAddress = MACAddress::new([0x00, 0x25, 0x00, 0xff, 0x94, 0x73]);
 const APPLE_OUI: [u8; 3] = [0x00, 0x17, 0xf2];
@@ -22,15 +24,25 @@ const APPLE_OUI: [u8; 3] = [0x00, 0x17, 0xf2];
 pub(crate) const PEER_CACHE_SIZE: usize = esp_config_int!(usize, "FOA_AWDL_CONFIG_PEER_CACHE_SIZE");
 pub(crate) const NET_TX_BUFFERS: usize = esp_config_int!(usize, "FOA_AWDL_CONFIG_NET_TX_BUFFERS");
 pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_AWDL_CONFIG_NET_RX_BUFFERS");
+pub(crate) const EVENT_QUEUE_DEPTH: usize =
+    esp_config_int!(usize, "FOA_AWDL_CONFIG_EVENT_QUEUE_DEPTH");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Errors that can occur with the AWDL interface.
 pub enum AwdlError {
     FailedToAcquireChannelLock,
 }
 
+/// The maximum transmission unit of the AWDL interface.
 pub const AWDL_MTU: usize = 1484;
+/// The net device of the AWDL interface.
 pub type AwdlNetDevice<'a> = embassy_net_driver_channel::Device<'a, AWDL_MTU>;
+/// Receiver for the event queue of the AWDL interface.
+pub type AwdlEventQueueReceiver<'a> = DynamicReceiver<'a, AwdlEvent>;
 
+/// Initialize and AWDL interface.
+///
+/// You'll get a control interface, a runner, a net device and a receiver for the event queue.
 pub fn new_awdl_interface<'foa, 'vif, Rng: RngCore + Clone>(
     virtual_interface: &'vif mut VirtualInterface<'foa>,
     resources: &'vif mut AwdlResources,
@@ -39,6 +51,7 @@ pub fn new_awdl_interface<'foa, 'vif, Rng: RngCore + Clone>(
     AwdlControl<'foa, 'vif, Rng>,
     AwdlRunner<'foa, 'vif>,
     AwdlNetDevice<'vif>,
+    AwdlEventQueueReceiver<'vif>,
 ) {
     virtual_interface.reset();
     let (interface_control, rx_queue) = virtual_interface.split();
@@ -46,41 +59,31 @@ pub fn new_awdl_interface<'foa, 'vif, Rng: RngCore + Clone>(
     interface_control.set_filter_parameters(RxFilterBank::BSSID, *AWDL_BSSID, None);
     interface_control.set_filter_status(RxFilterBank::BSSID, true);
 
-    let (runner, device) = embassy_net_driver_channel::new(
+    let (net_runner, net_device) = embassy_net_driver_channel::new(
         &mut resources.net_state,
         HardwareAddress::Ethernet(interface_control.get_factory_mac_for_interface()),
     );
 
-    let (state_runner, rx_runner, tx_runner) = runner.split();
-
     (
         AwdlControl {
             interface_control,
-            rng: rng.clone(),
+            rng,
             common_resources: &resources.common_resources,
             channel: 6,
             mac_address: MACAddress::new(interface_control.get_factory_mac_for_interface()),
         },
-        AwdlRunner {
-            management_runner: AwdlManagementRunner {
-                interface_control,
-                rx_queue,
-                common_resources: &resources.common_resources,
-                rx_runner,
-            },
-            msdu_tx_runner: AwdlMsduTxRunner {
-                interface_control,
-                tx_runner,
-                common_resources: &resources.common_resources,
-            },
-            common_resources: &resources.common_resources,
-            state_runner,
-        },
-        device,
+        AwdlRunner::new(
+            interface_control,
+            rx_queue,
+            &resources.common_resources,
+            net_runner,
+        ),
+        net_device,
+        resources.common_resources.event_queue.dyn_receiver(),
     )
 }
 /// Convert a MAC address to a link local IPv6 address.
-pub(crate) fn hw_address_to_ipv6(address: MACAddress) -> Ipv6Addr {
+pub fn hw_address_to_ipv6(address: &[u8; 6]) -> Ipv6Addr {
     Ipv6Addr::new(
         0xfe80,
         0x0000,
@@ -93,7 +96,7 @@ pub(crate) fn hw_address_to_ipv6(address: MACAddress) -> Ipv6Addr {
     )
 }
 /// Convert a link local IPv6 address to a MAC address.
-pub(crate) fn ipv6_to_hw_address(ipv6: &Ipv6Addr) -> MACAddress {
+pub fn ipv6_to_hw_address(ipv6: &Ipv6Addr) -> MACAddress {
     let ipv6 = ipv6.octets();
     MACAddress::new([
         ipv6[8] ^ 0x2,

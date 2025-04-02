@@ -22,6 +22,12 @@ fn main() {
                 Value::Integer(4),
                 Some(Validator::PositiveInteger),
             ),
+            (
+                "EVENT_QUEUE_DEPTH",
+                "The maximum number of events, that the event queue can hold",
+                Value::Integer(4),
+                Some(Validator::PositiveInteger),
+            ),
         ],
         true,
     );
