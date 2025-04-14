@@ -60,8 +60,9 @@ impl ChannelState {
                 // Then we check how many interfaces have locked the channel as well.
                 let interface_lock_count = interfaces.iter().filter(|locked| **locked).count();
                 let mut changed = false;
-                if !same_channel && !already_locked_by_interface {
-                    // Another interface has lock on a different channel, so we can't change it.
+                if !same_channel && (!already_locked_by_interface || interface_lock_count > 1) {
+                    // Switching the channel is not possible if another interface already holds
+                    // lock.
                     return Err(LMacError::ChannelLockedByOtherInterface);
                 } else if already_locked_by_interface && interface_lock_count == 1 {
                     // The interface already has exclusive lock on the channel and can therefore

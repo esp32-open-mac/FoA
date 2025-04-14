@@ -39,6 +39,12 @@ impl ConnectionOperation<'_, '_> {
     fn complete(self) {
         mem::forget(self);
     }
+    /// Send the specified frame and wait for a response.
+    ///
+    /// If no response is received in the specified timeout duration, or a transmission error
+    /// occurs, the step will be retried as many times as specified. This compensates for a weird
+    /// behavior of some APs, where they ACK a frame, but don't transmit a response. While this is
+    /// rare, it can still occur, so this significantly stabilizes connection establishment.
     async fn do_bidirectional_connection_step(
         &self,
         tx_frame: impl TryIntoCtx<bool, Error = ieee80211::scroll::Error>,
@@ -46,11 +52,12 @@ impl ConnectionOperation<'_, '_> {
         phy_rate: WiFiRate,
         retries: usize,
     ) -> Result<ReceivedFrame<'_>, StaError> {
+        // Allocate a TX buffer and serialize the frame.
         let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite(tx_frame, 0)
             .map_err(|_| StaError::TxBufferTooSmall)?;
-        for _ in 0..retries + 1 {
+        for _ in 0..=retries {
             let res = self
                 .sta_tx_rx
                 .interface_control
@@ -78,6 +85,8 @@ impl ConnectionOperation<'_, '_> {
         Err(StaError::ResponseTimeout)
     }
     /// Authenticate with the BSS.
+    ///
+    /// This currently only performs open system authentication.
     async fn do_auth(
         &self,
         bss: &BSS,
@@ -103,9 +112,11 @@ impl ConnectionOperation<'_, '_> {
                 _phantom: PhantomData,
             },
         };
+        // Transmit an authentication frame and wait for the response.
         let response = self
             .do_bidirectional_connection_step(auth_frame, timeout, phy_rate, retries)
             .await?;
+        // Try to parse the frame or return an error.
         let Ok(auth_frame) = response.mpdu_buffer().pread::<AuthenticationFrame>(0) else {
             debug!(
                 "Failed to authenticate with {}, frame deserialization failed.",
@@ -113,6 +124,7 @@ impl ConnectionOperation<'_, '_> {
             );
             return Err(StaError::FrameDeserializationFailed);
         };
+        // Check if the authentication was successful and return an authentication failure if not.
         if auth_frame.status_code == IEEE80211StatusCode::Success {
             debug!("Successfully authenticated with {}.", bss.bssid);
             Ok(())
@@ -125,6 +137,9 @@ impl ConnectionOperation<'_, '_> {
         }
     }
     /// Associate with the BSS.
+    ///
+    /// Like authentication, this only performs the bare minimum with a set of predetermined
+    /// supported rates.
     async fn do_assoc(
         &self,
         bss: &BSS,
@@ -153,9 +168,11 @@ impl ConnectionOperation<'_, '_> {
                 _phantom: PhantomData,
             },
         };
+        // Transmit an association request and wait for the association response.
         let response = self
             .do_bidirectional_connection_step(assoc_request_frame, timeout, phy_rate, retries)
             .await?;
+        // Try to parse the response or return an error.
         let Ok(assoc_response) = response.mpdu_buffer().pread::<AssociationResponseFrame>(0) else {
             debug!(
                 "Failed to associate with {}, frame deserialization failed.",

@@ -109,7 +109,7 @@ async fn main(spawner: Spawner) {
         let vif = Box::new(vif);
 
         let (sta_control, sta_runner, sta_net_device) =
-            foa_sta::new_sta_interface(Box::leak(vif), Box::leak(sta_resources), rng.clone());
+            foa_sta::new_sta_interface(Box::leak(vif), Box::leak(sta_resources), rng);
         spawner.spawn(sta_task(sta_runner)).unwrap();
         (sta_control, sta_net_device)
     });

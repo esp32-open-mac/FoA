@@ -3,7 +3,7 @@ runner = "espflash flash --monitor -L defmt -S"
 
 [build]
 rustflags = [
-  "-C", "link-arg=-nostartfiles",  "-C", "link-arg=-Tdefmt.x",
+  "-C", "link-arg=-nostartfiles",  "-C", "link-arg=-Tdefmt.x"
 ]
 
 target = ["xtensa-esp32-none-elf", "xtensa-esp32s2-none-elf"]
@@ -11,6 +11,7 @@ target = ["xtensa-esp32-none-elf", "xtensa-esp32s2-none-elf"]
 [env]
 FOA_CONFIG_RX_BUFFER_COUNT = "5"
 FOA_CONFIG_TX_BUFFER_COUNT = "5"
+SSID = ""
 
 [unstable]
 build-std = ["core", "alloc"]

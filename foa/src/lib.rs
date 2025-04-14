@@ -1,3 +1,4 @@
+#![no_std]
 //! # Ferris-on-Air (FoA)
 //! Ferris-on-Air is an asynchronous IEEE 802.11 MAC stack for the ESP32 series of chips. It is
 //! build on top of [esp_wifi_hal], which is the driver for the Wi-Fi peripheral, and is based on
@@ -22,7 +23,6 @@
 //! ### Station (STA)
 //! A simple STA mode interface is implemented in [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta).
 //! For details on the supported features, please check the documentation of `foa_sta`.
-#![no_std]
 
 use core::{array, mem};
 

@@ -3,16 +3,13 @@
 
 use defmt::info;
 use embassy_executor::Spawner;
-use embassy_time::Timer;
 
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println as _;
 
 use foa::{FoAResources, FoARunner, VirtualInterface};
-use foa_sta::{StaNetDevice, StaResources, StaRunner};
-
-use rand_core::RngCore;
+use foa_sta::{StaResources, StaRunner};
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -57,10 +54,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
-    let mut mac_address = [0u8; 6];
-    Rng::new(peripherals.RNG).fill_bytes(mac_address.as_mut_slice());
-    mac_address[0] &= !(1);
-    sta_control.set_mac_address(mac_address).await.unwrap();
+    let mac_address = sta_control.randomize_mac_address();
     info!("Using MAC address: {:#x}", mac_address);
 
     defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);

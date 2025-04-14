@@ -1,6 +1,6 @@
 #![no_std]
 
-//! This module implements a station (STA) interface for FoA.
+//! This crate implements a station (STA) interface for FoA.
 //!
 //! ## Usage
 //! To initialize a STA interface, call [new_sta_interface] with a [VirtualInterface] you got from
