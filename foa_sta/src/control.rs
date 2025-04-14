@@ -160,6 +160,9 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         debug!("Successfully connected to {}", bss.bssid);
         Ok(())
     }
+    /// Connect to a network based on it's SSID.
+    ///
+    /// This will search for the network and connect to the first one it finds.
     pub async fn connect_by_ssid(
         &mut self,
         ssid: &str,

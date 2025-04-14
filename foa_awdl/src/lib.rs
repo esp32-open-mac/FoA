@@ -1,4 +1,38 @@
 #![no_std]
+//! This crate implements an Apple Wireless Direct Link (AWDL) interface for FoA.
+//!
+//! ## What is AWDL?
+//! AWDL is a wireless P2P protocol, that allows Apple device to communicate directly. It is a
+//! significant improvmenet over IBSS in terms of flexibility and power consumption.
+//!
+//! For futher information on how AWDL I suggest you take a look at the [website of the owlink
+//! project](https://owlink.org/wiki/) and [Milan Stute's dissertation](https://tuprints.ulb.tu-darmstadt.de/11457/1/dissertation_milan-stute_2020.pdf).
+//!
+//! ## What works
+//! - Synchronization
+//! - Election
+//! - PSF & MIF Transmission
+//! - Data TX & RX
+//! - Basic Service Discovery
+//! - Event Queue
+//!
+//! ## What doesn't work
+//! - Channel Hopping (Because there's no use for it on the regular ESP32)
+//! - Off Channel Operations
+//! - Coexistence with interfaces on different channels
+//!
+//! ## Usage
+//! Initialize the interface with [foa_awdl::new_awdl_interface](new_awdl_interface), which will
+//! give you four things:
+//! 1. [AwdlControl] to control the interface
+//! 2. [AwdlRunner] to run the background task
+//! 3. [AwdlNetDevice] to initialize `embassy_net`
+//! 4. [AwdlEventQueueReceiver] to get events from the interface
+//!
+//! For the interface to work, you have to call [AwdlRunner::run] either in a separate task or join
+//! the future with another. You can then use the net device to initialize the IP stack and start
+//! the interface with [AwdlControl::start]. Once the interface is running, you can receive events
+//! from the event queue, which report status changes from the interface.
 
 use core::net::Ipv6Addr;
 
