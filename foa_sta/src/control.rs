@@ -1,6 +1,5 @@
 //! This module provides control over the STA interface.
 
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::Duration;
 use ieee80211::{
     common::AssociationID,
@@ -9,7 +8,7 @@ use ieee80211::{
     mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
 };
 
-use foa::{esp_wifi_hal::WiFiRate, ReceivedFrame};
+use foa::esp_wifi_hal::WiFiRate;
 use rand_core::RngCore;
 
 use crate::{
@@ -18,8 +17,7 @@ use crate::{
         deauth::send_deauth,
         scan::{scan, ScanConfig, ScanType},
     },
-    rx_router::RouterQueue,
-    ConnectionInfo, StaTxRx, RX_QUEUE_LEN,
+    ConnectionInfo, StaRxRouterEndpoint, StaTxRx,
 };
 
 use super::{ConnectionState, StaError, DEFAULT_TIMEOUT};
@@ -57,7 +55,7 @@ impl BSS {
 /// This provides control over the STA interface.
 pub struct StaControl<'foa, 'vif, Rng: RngCore> {
     // Low level RX/TX.
-    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
+    pub(crate) rx_router_endpoint: StaRxRouterEndpoint<'foa, 'vif>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Misc.
@@ -96,8 +94,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
     ) -> Result<(), StaError> {
         scan(
             self.sta_tx_rx,
-            self.rx_queue,
-            RouterQueue::User,
+            &self.rx_router_endpoint,
             scan_config,
             ScanType::Enumerate(found_bss),
         )
@@ -112,8 +109,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         let mut ess = None;
         scan::<0>(
             self.sta_tx_rx,
-            self.rx_queue,
-            RouterQueue::User,
+            &self.rx_router_endpoint,
             scan_config,
             ScanType::Search(ssid, &mut ess),
         )
@@ -139,8 +135,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         self.sta_tx_rx.reset_phy_rate();
         let aid = ConnectionOperation {
             sta_tx_rx: self.sta_tx_rx,
-            rx_queue: self.rx_queue,
-            router_queue: RouterQueue::User,
+            rx_router_endpoint: &self.rx_router_endpoint,
         }
         .run(
             bss,

@@ -1,6 +1,5 @@
 use core::{marker::PhantomData, mem};
 
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{with_timeout, Duration};
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
@@ -25,17 +24,16 @@ use ieee80211::{
 use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rx_router::{Operation, RouterQueue},
-    StaError, StaTxRx, RX_QUEUE_LEN,
+    rx_router::StaRxRouterOperation,
+    StaError, StaRxRouterEndpoint, StaTxRx,
 };
 
 /// Connecting to an AP.
-pub struct ConnectionOperation<'foa, 'vif> {
+pub struct ConnectionOperation<'foa, 'vif, 'endpoint> {
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
-    pub(crate) rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
-    pub(crate) router_queue: RouterQueue,
+    pub(crate) rx_router_endpoint: &'endpoint StaRxRouterEndpoint<'foa, 'vif>,
 }
-impl ConnectionOperation<'_, '_> {
+impl ConnectionOperation<'_, '_, '_> {
     fn complete(self) {
         mem::forget(self);
     }
@@ -75,7 +73,7 @@ impl ConnectionOperation<'_, '_> {
             }
             // Due to the user operation being set to authenticating, we'll only receive authentication
             // frames.
-            if let Ok(frame) = with_timeout(timeout, self.rx_queue.receive()).await {
+            if let Ok(frame) = with_timeout(timeout, self.rx_router_endpoint.receive()).await {
                 return Ok(frame);
             } else {
                 trace!("Response to bidirectional connection step timed out.");
@@ -240,10 +238,9 @@ impl ConnectionOperation<'_, '_> {
         // the match statement in the RX router will have to be expanded, to route those frames
         // too.
         let rx_router_operation = self
-            .sta_tx_rx
-            .rx_router
-            .begin_scoped_operation(self.router_queue, Operation::Connecting(mac_address))
-            .await;
+            .rx_router_endpoint
+            .start_router_operation(StaRxRouterOperation::Connecting(mac_address))
+            .map_err(|_| StaError::RouterOperationAlreadyInProgress)?;
 
         // Configure the RX filters to the specified addresses, so that we actually receive frames
         // from the AP.
@@ -274,7 +271,7 @@ impl ConnectionOperation<'_, '_> {
         Ok(aid)
     }
 }
-impl Drop for ConnectionOperation<'_, '_> {
+impl Drop for ConnectionOperation<'_, '_, '_> {
     fn drop(&mut self) {
         self.sta_tx_rx
             .interface_control

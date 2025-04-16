@@ -716,6 +716,7 @@ dependencies = [
  "esp-config",
  "esp-hal",
  "esp-wifi-hal",
+ "ieee80211",
  "portable-atomic",
  "static_cell",
 ]

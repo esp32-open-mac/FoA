@@ -6,10 +6,6 @@ use embassy_futures::{
 };
 use embassy_net::driver::{HardwareAddress, LinkState};
 use embassy_net_driver_channel::{RxRunner, StateRunner, TxRunner};
-use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    channel::{Channel, DynamicSender},
-};
 use embassy_time::{Duration, Ticker};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
@@ -27,12 +23,12 @@ use ieee80211::{
 use llc_rs::SnapLlcFrame;
 
 use crate::{
-    operations::deauth::send_deauth, rx_router::RouterQueue, ConnectionInfo, ConnectionState,
-    ConnectionStateTracker, StaTxRx, MTU, RX_QUEUE_LEN,
+    operations::deauth::send_deauth, rx_router::StaRxRouterOperation, ConnectionInfo,
+    ConnectionState, ConnectionStateTracker, StaRxRouterEndpoint, StaRxRouterInput, StaTxRx, MTU,
 };
 pub(crate) struct ConnectionRunner<'foa, 'vif> {
     // Low level RX/TX.
-    pub(crate) bg_rx_queue: &'vif Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
+    pub(crate) rx_router_endpoint: StaRxRouterEndpoint<'foa, 'vif>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
     // Upper layer control.
@@ -87,7 +83,7 @@ impl ConnectionRunner<'_, '_> {
                 self.sta_tx_rx
                     .interface_control
                     .wait_for_off_channel_request(),
-                self.bg_rx_queue.receive(),
+                self.rx_router_endpoint.receive(),
                 beacon_timeout.next(),
             )
             .await
@@ -203,8 +199,7 @@ impl ConnectionRunner<'_, '_> {
 }
 pub(crate) struct RoutingRunner<'foa, 'vif> {
     // Low level RX/TX.
-    pub(crate) bg_queue_sender: DynamicSender<'vif, ReceivedFrame<'foa>>,
-    pub(crate) user_queue_sender: DynamicSender<'vif, ReceivedFrame<'foa>>,
+    pub(crate) rx_router_input: StaRxRouterInput<'foa, 'vif>,
     pub(crate) interface_rx_queue: &'vif RxQueueReceiver<'foa>,
     pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
 
@@ -278,7 +273,11 @@ impl RoutingRunner<'_, '_> {
                     .connection_state
                     .connection_info()
                     .map(|connection_info| connection_info.own_address)
-                    .or_else(|| self.sta_tx_rx.rx_router.get_connecting_mac_address())
+                    .or_else(|| {
+                        self.rx_router_input
+                            .current_operation()
+                            .and_then(StaRxRouterOperation::connecting_mac_address)
+                    })
                 {
                     if own_address != address_1 {
                         continue;
@@ -312,15 +311,7 @@ impl RoutingRunner<'_, '_> {
                 );
             } else {
                 // We ask the RX router, where all other frames should go.
-                let _ = match self
-                    .sta_tx_rx
-                    .rx_router
-                    .target_queue_for_frame(&generic_frame)
-                {
-                    RouterQueue::User => &self.user_queue_sender,
-                    RouterQueue::Background => &self.bg_queue_sender,
-                }
-                .try_send(borrowed_buffer);
+                let _ = self.rx_router_input.route_frame(borrowed_buffer);
             }
         }
     }

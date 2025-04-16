@@ -1,15 +1,8 @@
-use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    channel::{Channel, DynamicReceiver},
-};
 use embassy_time::{with_timeout, Duration};
-use foa::{esp_wifi_hal::ScanningMode, ReceivedFrame};
+use foa::esp_wifi_hal::ScanningMode;
 use ieee80211::{mgmt_frame::BeaconFrame, scroll::Pread};
 
-use crate::{
-    rx_router::{Operation, RouterQueue},
-    StaError, StaTxRx, BSS, RX_QUEUE_LEN,
-};
+use crate::{rx_router::StaRxRouterOperation, StaError, StaRxRouterEndpoint, StaTxRx, BSS};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ScanStrategy<'a> {
@@ -46,14 +39,14 @@ pub enum ScanType<'a, const MAX_BSS: usize = 0> {
     Enumerate(&'a mut heapless::Vec<BSS, MAX_BSS>),
 }
 async fn search_for_bss_on_channel(
-    rx_queue_receiver: DynamicReceiver<'_, ReceivedFrame<'_>>,
+    rx_router_endpoint: &StaRxRouterEndpoint<'_, '_>,
     channel_remain_time: Duration,
     search_ssid: &str,
     bss_dst: &mut Option<BSS>,
 ) {
     let _ = with_timeout(channel_remain_time, async {
         loop {
-            let received = rx_queue_receiver.receive().await;
+            let received = rx_router_endpoint.receive().await;
             let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
                 continue;
             };
@@ -72,13 +65,13 @@ async fn search_for_bss_on_channel(
     .await;
 }
 async fn enumerate_bss_on_channel<const MAX_BSS: usize>(
-    rx_queue_receiver: DynamicReceiver<'_, ReceivedFrame<'_>>,
+    rx_router_endpoint: &StaRxRouterEndpoint<'_, '_>,
     channel_remain_time: Duration,
     dst: &mut heapless::Vec<BSS, MAX_BSS>,
 ) {
     let _ = with_timeout(channel_remain_time, async {
         loop {
-            let received = rx_queue_receiver.receive().await;
+            let received = rx_router_endpoint.receive().await;
             let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
                 continue;
             };
@@ -104,8 +97,7 @@ async fn enumerate_bss_on_channel<const MAX_BSS: usize>(
 /// ESS and stopping once it's found.
 pub async fn scan<const MAX_BSS: usize>(
     sta_tx_rx: &StaTxRx<'_, '_>,
-    rx_queue: &Channel<NoopRawMutex, ReceivedFrame<'_>, RX_QUEUE_LEN>,
-    router_queue: RouterQueue,
+    rx_router_endpoint: &StaRxRouterEndpoint<'_, '_>,
     scan_config: Option<ScanConfig<'_>>,
     mut scan_type: ScanType<'_, MAX_BSS>,
 ) -> Result<(), StaError> {
@@ -124,18 +116,16 @@ pub async fn scan<const MAX_BSS: usize>(
         ScanStrategy::Single(channel) => &[channel],
         ScanStrategy::CurrentChannel => &[sta_tx_rx.interface_control.get_current_channel()],
         ScanStrategy::Linear => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
-        ScanStrategy::NonOverlappingFirst => [1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13].as_slice(),
+        ScanStrategy::NonOverlappingFirst => [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10].as_slice(),
         ScanStrategy::Custom(channels) => channels,
     };
     debug!("ESS scan started. Scanning channels: {:?}", channels);
     // Setup scanning mode, by configuring the RX router to route beacons to us, setting the scanning mode and clearing
     // the RX queue, so every frame received after this is a beacon.
-    let router_operation = sta_tx_rx
-        .rx_router
-        .begin_scoped_operation(router_queue, Operation::Scanning)
-        .await;
+    let router_operation = rx_router_endpoint
+        .start_router_operation(StaRxRouterOperation::Scanning)
+        .map_err(|_| StaError::RouterOperationAlreadyInProgress)?;
     off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
-    rx_queue.clear();
 
     // Loop through channels.
     for channel in channels {
@@ -145,7 +135,7 @@ pub async fn scan<const MAX_BSS: usize>(
         match &mut scan_type {
             ScanType::Search(search_ssid, bss_dst) => {
                 search_for_bss_on_channel(
-                    rx_queue.dyn_receiver(),
+                    rx_router_endpoint,
                     scan_config.channel_remain_time,
                     search_ssid,
                     bss_dst,
@@ -156,12 +146,8 @@ pub async fn scan<const MAX_BSS: usize>(
                 }
             }
             ScanType::Enumerate(dst) => {
-                enumerate_bss_on_channel(
-                    rx_queue.dyn_receiver(),
-                    scan_config.channel_remain_time,
-                    dst,
-                )
-                .await
+                enumerate_bss_on_channel(rx_router_endpoint, scan_config.channel_remain_time, dst)
+                    .await
             }
         }
     }

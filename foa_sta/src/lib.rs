@@ -22,7 +22,7 @@
 use core::cell::Cell;
 
 use embassy_net::driver::HardwareAddress;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel, signal::Signal};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use embassy_time::Duration;
 use esp_config::esp_config_int;
 use ieee80211::{
@@ -32,7 +32,9 @@ use ieee80211::{
 
 use embassy_net_driver_channel::{self as ch};
 use foa::{
-    esp_wifi_hal::WiFiRate, LMacError, LMacInterfaceControl, ReceivedFrame, VirtualInterface,
+    esp_wifi_hal::WiFiRate,
+    rx_router::{RxRouter, RxRouterEndpoint, RxRouterInput},
+    LMacError, LMacInterfaceControl, VirtualInterface,
 };
 
 #[macro_use]
@@ -47,8 +49,8 @@ pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
 pub use operations::scan::ScanConfig;
-use rx_router::RxRouter;
 mod rx_router;
+use rx_router::StaRxRouterOperation;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +80,8 @@ pub enum StaError {
     SameNetwork,
     /// The provided BSS was invalid.
     InvalidBss,
+    /// Another internal operation is already in progress.
+    RouterOperationAlreadyInProgress,
 }
 
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
@@ -146,7 +150,6 @@ impl ConnectionStateTracker {
 #[derive(Clone)]
 /// TX and RX resources for the interface control and runner.
 pub(crate) struct StaTxRx<'foa, 'vif> {
-    pub(crate) rx_router: &'vif RxRouter,
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) connection_state: &'vif ConnectionStateTracker,
     phy_rate: &'vif Cell<WiFiRate>,
@@ -175,12 +178,15 @@ pub(crate) const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX
 pub(crate) const NET_TX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_TX_BUFFERS");
 pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_RX_BUFFERS");
 
+pub(crate) type StaRxRouterEndpoint<'foa, 'router> =
+    RxRouterEndpoint<'foa, 'router, RX_QUEUE_LEN, StaRxRouterOperation>;
+pub(crate) type StaRxRouterInput<'foa, 'router> =
+    RxRouterInput<'foa, 'router, RX_QUEUE_LEN, StaRxRouterOperation>;
+pub(crate) type StaRxRouter<'foa> = RxRouter<'foa, RX_QUEUE_LEN, StaRxRouterOperation>;
 /// Shared resources for the STA interface.
 pub struct StaResources<'foa> {
     // RX routing.
-    rx_router: RxRouter,
-    bg_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
-    user_queue: Channel<NoopRawMutex, ReceivedFrame<'foa>, RX_QUEUE_LEN>,
+    rx_router: StaRxRouter<'foa>,
 
     // Networking.
     channel_state: ch::State<MTU, NET_RX_BUFFERS, NET_TX_BUFFERS>,
@@ -196,8 +202,6 @@ impl StaResources<'_> {
     pub const fn new() -> Self {
         Self {
             rx_router: RxRouter::new(),
-            bg_queue: Channel::new(),
-            user_queue: Channel::new(),
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
             phy_rate: Cell::new(WiFiRate::PhyRate1ML),
@@ -241,32 +245,31 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
         >(&mut resources.sta_tx_rx)
     }
     .insert(StaTxRx {
-        rx_router: &resources.rx_router,
         interface_control,
         connection_state: &resources.connection_state,
         phy_rate: &resources.phy_rate,
     });
     let (state_runner, rx_runner, tx_runner) = net_runner.split();
+    let (rx_router_input, [foreground_endpoint, background_endpoint]) = resources.rx_router.split();
     (
         StaControl {
             sta_tx_rx,
             mac_address: MACAddress::new(mac_address),
-            rx_queue: &resources.user_queue,
+            rx_router_endpoint: foreground_endpoint,
             rng,
         },
         StaRunner {
             tx_runner,
             connection_runner: ConnectionRunner {
                 sta_tx_rx,
-                bg_rx_queue: &resources.bg_queue,
+                rx_router_endpoint: background_endpoint,
                 state_runner,
             },
             routing_runner: RoutingRunner {
+                rx_router_input,
                 sta_tx_rx,
-                bg_queue_sender: resources.bg_queue.dyn_sender(),
                 interface_rx_queue,
                 rx_runner,
-                user_queue_sender: resources.user_queue.dyn_sender(),
             },
         },
         net_device,
