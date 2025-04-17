@@ -1,0 +1,34 @@
+[package]
+name = "foa_mesh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-futures = "0.1.1"
+embassy-sync = "0.6.2"
+embassy-time = "0.4.0"
+embassy-net-driver-channel = "0.3.0"
+
+foa = { path = "../foa/" }
+
+defmt = { version = "0.3.10", optional = true }
+defmt-or-log = { version = "0.2.1", default-features = false }
+esp-config = "0.3.1"
+heapless = "0.8.0"
+rand_core = "0.6.0"
+
+llc-rs = "0.1.0"
+ethernet = { version = "0.1.5", default-features = false }
+ieee80211 = "0.5.4"
+
+[build-dependencies]
+esp-config = { version = "0.3.1", features = ["build"] }
+
+[features]
+esp32 = ["foa/esp32"]
+esp32s2 = ["foa/esp32s2"]
+
+defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
+log = ["defmt-or-log/log"]
+
+
