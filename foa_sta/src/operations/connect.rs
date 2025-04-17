@@ -24,8 +24,8 @@ use ieee80211::{
 use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rx_router::StaRxRouterOperation,
-    StaError, StaRxRouterEndpoint, StaTxRx,
+    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation},
+    StaError, StaTxRx,
 };
 
 /// Connecting to an AP.

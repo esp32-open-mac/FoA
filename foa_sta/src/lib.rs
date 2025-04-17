@@ -30,11 +30,9 @@ use ieee80211::{
     mac_parser::MACAddress,
 };
 
-use embassy_net_driver_channel::{self as ch};
+use embassy_net_driver_channel as ch;
 use foa::{
-    esp_wifi_hal::WiFiRate,
-    rx_router::{RxRouter, RxRouterEndpoint, RxRouterInput},
-    LMacError, LMacInterfaceControl, VirtualInterface,
+    esp_wifi_hal::WiFiRate, rx_router::RxRouter, LMacError, LMacInterfaceControl, VirtualInterface,
 };
 
 #[macro_use]
@@ -50,7 +48,7 @@ use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
 pub use operations::scan::ScanConfig;
 mod rx_router;
-use rx_router::StaRxRouterOperation;
+use rx_router::StaRxRouter;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,15 +172,9 @@ impl StaTxRx<'_, '_> {
     }
 }
 
-pub(crate) const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX_QUEUE_LEN");
+pub(crate) const RX_QUEUE_DEPTH: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX_QUEUE_DEPTH");
 pub(crate) const NET_TX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_TX_BUFFERS");
 pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_STA_CONFIG_NET_RX_BUFFERS");
-
-pub(crate) type StaRxRouterEndpoint<'foa, 'router> =
-    RxRouterEndpoint<'foa, 'router, RX_QUEUE_LEN, StaRxRouterOperation>;
-pub(crate) type StaRxRouterInput<'foa, 'router> =
-    RxRouterInput<'foa, 'router, RX_QUEUE_LEN, StaRxRouterOperation>;
-pub(crate) type StaRxRouter<'foa> = RxRouter<'foa, RX_QUEUE_LEN, StaRxRouterOperation>;
 /// Shared resources for the STA interface.
 pub struct StaResources<'foa> {
     // RX routing.

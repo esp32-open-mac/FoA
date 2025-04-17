@@ -1,4 +1,5 @@
-use foa::rx_router::RxRouterOperation;
+use crate::RX_QUEUE_DEPTH;
+use foa::rx_router::{RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation};
 use ieee80211::{
     common::{FrameType, ManagementFrameSubtype},
     mac_parser::MACAddress,
@@ -39,3 +40,9 @@ impl RxRouterOperation for StaRxRouterOperation {
         }
     }
 }
+
+pub type StaRxRouterEndpoint<'foa, 'router> =
+    RxRouterEndpoint<'foa, 'router, RX_QUEUE_DEPTH, StaRxRouterOperation>;
+pub type StaRxRouterInput<'foa, 'router> =
+    RxRouterInput<'foa, 'router, RX_QUEUE_DEPTH, StaRxRouterOperation>;
+pub type StaRxRouter<'foa> = RxRouter<'foa, RX_QUEUE_DEPTH, StaRxRouterOperation>;

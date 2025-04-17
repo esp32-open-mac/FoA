@@ -2,7 +2,10 @@ use embassy_time::{with_timeout, Duration};
 use foa::esp_wifi_hal::ScanningMode;
 use ieee80211::{mgmt_frame::BeaconFrame, scroll::Pread};
 
-use crate::{rx_router::StaRxRouterOperation, StaError, StaRxRouterEndpoint, StaTxRx, BSS};
+use crate::{
+    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation},
+    StaError, StaTxRx, BSS,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ScanStrategy<'a> {

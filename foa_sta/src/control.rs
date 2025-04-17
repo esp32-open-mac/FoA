@@ -17,7 +17,8 @@ use crate::{
         deauth::send_deauth,
         scan::{scan, ScanConfig, ScanType},
     },
-    ConnectionInfo, StaRxRouterEndpoint, StaTxRx,
+    rx_router::StaRxRouterEndpoint,
+    ConnectionInfo, StaTxRx,
 };
 
 use super::{ConnectionState, StaError, DEFAULT_TIMEOUT};

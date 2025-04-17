@@ -23,8 +23,9 @@ use ieee80211::{
 use llc_rs::SnapLlcFrame;
 
 use crate::{
-    operations::deauth::send_deauth, rx_router::StaRxRouterOperation, ConnectionInfo,
-    ConnectionState, ConnectionStateTracker, StaRxRouterEndpoint, StaRxRouterInput, StaTxRx, MTU,
+    operations::deauth::send_deauth,
+    rx_router::{StaRxRouterEndpoint, StaRxRouterInput, StaRxRouterOperation},
+    ConnectionInfo, ConnectionState, ConnectionStateTracker, StaTxRx, MTU,
 };
 pub(crate) struct ConnectionRunner<'foa, 'vif> {
     // Low level RX/TX.

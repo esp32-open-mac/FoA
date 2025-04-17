@@ -5,7 +5,7 @@ fn main() {
         "foa_sta",
         &[
             (
-                "RX_QUEUE_LEN",
+                "RX_QUEUE_DEPTH",
                 "The depth of the user and background RX queues.",
                 Value::Integer(4),
                 Some(Validator::PositiveInteger),
