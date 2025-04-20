@@ -1,5 +1,6 @@
 use core::{marker::PhantomData, mem};
 
+use embassy_futures::join::join;
 use embassy_time::{with_timeout, Duration};
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
@@ -24,16 +25,23 @@ use ieee80211::{
 use crate::{
     control::BSS,
     operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation},
+    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation, StaRxRouterScopedOperation},
     StaError, StaTxRx,
 };
 
-/// Connecting to an AP.
-pub struct ConnectionOperation<'foa, 'vif, 'endpoint> {
-    pub(crate) sta_tx_rx: &'vif StaTxRx<'foa, 'vif>,
-    pub(crate) rx_router_endpoint: &'endpoint StaRxRouterEndpoint<'foa, 'vif>,
+pub struct ConnectionParameters {
+    pub phy_rate: WiFiRate,
+    pub retries: usize,
+    pub timeout: Duration,
+    pub own_address: MACAddress,
 }
-impl ConnectionOperation<'_, '_, '_> {
+
+/// Connecting to an AP.
+struct ConnectionOperation<'foa, 'vif, 'params> {
+    sta_tx_rx: &'params StaTxRx<'foa, 'vif>,
+    connection_parameters: &'params ConnectionParameters,
+}
+impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
     fn complete(self) {
         mem::forget(self);
     }
@@ -45,24 +53,22 @@ impl ConnectionOperation<'_, '_, '_> {
     /// rare, it can still occur, so this significantly stabilizes connection establishment.
     async fn do_bidirectional_connection_step(
         &self,
+        router_operation: &StaRxRouterScopedOperation<'foa, 'vif, 'params>,
         tx_frame: impl TryIntoCtx<bool, Error = ieee80211::scroll::Error>,
-        timeout: Duration,
-        phy_rate: WiFiRate,
-        retries: usize,
     ) -> Result<ReceivedFrame<'_>, StaError> {
         // Allocate a TX buffer and serialize the frame.
         let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
         let written = tx_buffer
             .pwrite(tx_frame, 0)
             .map_err(|_| StaError::TxBufferTooSmall)?;
-        for _ in 0..=retries {
+        for _ in 0..=self.connection_parameters.retries {
             let res = self
                 .sta_tx_rx
                 .interface_control
                 .transmit(
                     &mut tx_buffer[..written],
                     &TxParameters {
-                        rate: phy_rate,
+                        rate: self.connection_parameters.phy_rate,
                         ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
                     },
                     true,
@@ -73,7 +79,12 @@ impl ConnectionOperation<'_, '_, '_> {
             }
             // Due to the user operation being set to authenticating, we'll only receive authentication
             // frames.
-            if let Ok(frame) = with_timeout(timeout, self.rx_router_endpoint.receive()).await {
+            if let Ok(frame) = with_timeout(
+                self.connection_parameters.timeout,
+                router_operation.receive(),
+            )
+            .await
+            {
                 return Ok(frame);
             } else {
                 trace!("Response to bidirectional connection step timed out.");
@@ -87,17 +98,14 @@ impl ConnectionOperation<'_, '_, '_> {
     /// This currently only performs open system authentication.
     async fn do_auth(
         &self,
+        router_operation: &StaRxRouterScopedOperation<'foa, 'vif, 'params>,
         bss: &BSS,
-        timeout: Duration,
-        mac_address: MACAddress,
-        phy_rate: WiFiRate,
-        retries: usize,
     ) -> Result<(), StaError> {
         let auth_frame = AuthenticationFrame {
             header: ManagementFrameHeader {
                 receiver_address: bss.bssid,
                 bssid: bss.bssid,
-                transmitter_address: mac_address,
+                transmitter_address: self.connection_parameters.own_address,
                 sequence_control: SequenceControl::new(),
                 duration: 0,
                 ..Default::default()
@@ -112,7 +120,7 @@ impl ConnectionOperation<'_, '_, '_> {
         };
         // Transmit an authentication frame and wait for the response.
         let response = self
-            .do_bidirectional_connection_step(auth_frame, timeout, phy_rate, retries)
+            .do_bidirectional_connection_step(router_operation, auth_frame)
             .await?;
         // Try to parse the frame or return an error.
         let Ok(auth_frame) = response.mpdu_buffer().pread::<AuthenticationFrame>(0) else {
@@ -140,17 +148,14 @@ impl ConnectionOperation<'_, '_, '_> {
     /// supported rates.
     async fn do_assoc(
         &self,
+        router_operation: &StaRxRouterScopedOperation<'foa, 'vif, 'params>,
         bss: &BSS,
-        timeout: Duration,
-        mac_address: MACAddress,
-        phy_rate: WiFiRate,
-        retries: usize,
     ) -> Result<AssociationID, StaError> {
         let assoc_request_frame = AssociationRequestFrame {
             header: ManagementFrameHeader {
                 receiver_address: bss.bssid,
                 bssid: bss.bssid,
-                transmitter_address: mac_address,
+                transmitter_address: self.connection_parameters.own_address,
                 sequence_control: SequenceControl::new(),
                 duration: 60,
                 ..Default::default()
@@ -168,7 +173,7 @@ impl ConnectionOperation<'_, '_, '_> {
         };
         // Transmit an association request and wait for the association response.
         let response = self
-            .do_bidirectional_connection_step(assoc_request_frame, timeout, phy_rate, retries)
+            .do_bidirectional_connection_step(router_operation, assoc_request_frame)
             .await?;
         // Try to parse the response or return an error.
         let Ok(assoc_response) = response.mpdu_buffer().pread::<AssociationResponseFrame>(0) else {
@@ -193,12 +198,12 @@ impl ConnectionOperation<'_, '_, '_> {
         );
         Err(StaError::AssociationFailure(assoc_response.status_code))
     }
-    fn configure_rx_filters(&self, bss: &BSS, mac_address: MACAddress) {
+    fn configure_rx_filters(&self, bss: &BSS) {
         // Here we set and enable the BSSID and RA filters.
 
         self.sta_tx_rx.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
-            *mac_address,
+            *self.connection_parameters.own_address,
             None,
         );
         self.sta_tx_rx
@@ -213,17 +218,14 @@ impl ConnectionOperation<'_, '_, '_> {
             .interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
     }
-    pub async fn run(
+    async fn run(
         self,
+        rx_router_endpoint: &'params mut StaRxRouterEndpoint<'foa, 'vif>,
         bss: &BSS,
-        timeout: Duration,
-        mac_address: MACAddress,
-        phy_rate: WiFiRate,
-        retries: usize,
     ) -> Result<AssociationID, StaError> {
         debug!(
             "Connecting to {} on channel {} with MAC address {}.",
-            bss.bssid, bss.channel, mac_address
+            bss.bssid, bss.channel, self.connection_parameters.own_address
         );
         // Start the bringup operation for LMAC channel lock.
         let bringup_operation = self
@@ -237,36 +239,31 @@ impl ConnectionOperation<'_, '_, '_> {
         // NOTE: If further protocol negotiations, like RSN, TDLS, FT etc. are added in the future,
         // the match statement in the RX router will have to be expanded, to route those frames
         // too.
-        let rx_router_operation = self
-            .rx_router_endpoint
-            .start_router_operation(StaRxRouterOperation::Connecting(mac_address))
-            .map_err(|_| StaError::RouterOperationAlreadyInProgress)?;
+        let (router_operation, _) = join(
+            rx_router_endpoint.start_operation(StaRxRouterOperation::Connecting(
+                self.connection_parameters.own_address,
+            )),
+            self.sta_tx_rx
+                .interface_control
+                .wait_for_off_channel_completion(),
+        )
+        .await;
 
         // Configure the RX filters to the specified addresses, so that we actually receive frames
         // from the AP.
-        self.configure_rx_filters(bss, mac_address);
+        self.configure_rx_filters(bss);
 
         // Try to authenticate with the AP.
-        self.do_auth(bss, timeout, mac_address, phy_rate, retries)
-            .await?;
+        self.do_auth(&router_operation, bss).await?;
 
         // Try to associate with the AP.
-        let aid = self
-            .do_assoc(bss, timeout, mac_address, phy_rate, retries)
-            .await?;
+        let aid = self.do_assoc(&router_operation, bss).await?;
 
-        // Because RSN isn't implemented right now, there's nothing more to do here and we've
-        // connected Successfully, so we mark the
-        // operations as completed.
-        // NOTE: This doesn't actually do anything for the RX router, except consuming the
-        // operation and therefore invoking the drop code. We mark it as completed anyway, since
-        // that's more explicit and easier to read.
-
-        bringup_operation.complete();
-        rx_router_operation.complete();
         // By marking the connection operation as completed, we forget self and therefore the drop
         // code never gets executed and the filter configuration remains in place.
         self.complete();
+        router_operation.complete();
+        bringup_operation.complete();
 
         Ok(aid)
     }
@@ -280,4 +277,17 @@ impl Drop for ConnectionOperation<'_, '_, '_> {
             .interface_control
             .set_filter_status(RxFilterBank::BSSID, false);
     }
+}
+pub async fn connect<'foa, 'vif, 'params>(
+    sta_tx_rx: &'params StaTxRx<'foa, 'vif>,
+    rx_router_endpoint: &'params mut StaRxRouterEndpoint<'foa, 'vif>,
+    bss: &'params BSS,
+    connection_parameters: &'params ConnectionParameters,
+) -> Result<AssociationID, StaError> {
+    ConnectionOperation {
+        sta_tx_rx,
+        connection_parameters,
+    }
+    .run(rx_router_endpoint, bss)
+    .await
 }

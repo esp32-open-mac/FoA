@@ -30,7 +30,7 @@ use ieee80211::{
     mac_parser::MACAddress,
 };
 
-use embassy_net_driver_channel as ch;
+use embassy_net_driver_channel::{self as ch};
 use foa::{
     esp_wifi_hal::WiFiRate, rx_router::RxRouter, LMacError, LMacInterfaceControl, VirtualInterface,
 };

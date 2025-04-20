@@ -13,7 +13,7 @@ use rand_core::RngCore;
 
 use crate::{
     operations::{
-        connect::ConnectionOperation,
+        connect::{self, ConnectionParameters},
         deauth::send_deauth,
         scan::{scan, ScanConfig, ScanType},
     },
@@ -95,7 +95,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
     ) -> Result<(), StaError> {
         scan(
             self.sta_tx_rx,
-            &self.rx_router_endpoint,
+            &mut self.rx_router_endpoint,
             scan_config,
             ScanType::Enumerate(found_bss),
         )
@@ -110,7 +110,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         let mut ess = None;
         scan::<0>(
             self.sta_tx_rx,
-            &self.rx_router_endpoint,
+            &mut self.rx_router_endpoint,
             scan_config,
             ScanType::Search(ssid, &mut ess),
         )
@@ -134,16 +134,16 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
             self.disconnect_internal(connection_info).await?;
         }
         self.sta_tx_rx.reset_phy_rate();
-        let aid = ConnectionOperation {
-            sta_tx_rx: self.sta_tx_rx,
-            rx_router_endpoint: &self.rx_router_endpoint,
-        }
-        .run(
+        let aid = connect::connect(
+            self.sta_tx_rx,
+            &mut self.rx_router_endpoint,
             bss,
-            timeout.unwrap_or(DEFAULT_TIMEOUT),
-            self.mac_address,
-            self.sta_tx_rx.phy_rate(),
-            4,
+            &ConnectionParameters {
+                phy_rate: self.sta_tx_rx.phy_rate(),
+                retries: 4,
+                timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
+                own_address: self.mac_address,
+            },
         )
         .await?;
         self.sta_tx_rx

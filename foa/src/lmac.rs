@@ -333,7 +333,7 @@ impl<'res> LMacReceiveEndpoint<'res> {
 /// Consider an STA implementation. When connecting to a network, the implementation will attempt
 /// to acquire channel lock before the connection setup. If that setup fails or the future is
 /// cancelled, the channel should be unlocked again.
-pub struct InterfaceBringupOperation<'a, 'res> {
+pub struct InterfaceBringupOperation<'res, 'a> {
     lmac_interface_control: &'a LMacInterfaceControl<'res>,
 }
 impl InterfaceBringupOperation<'_, '_> {
@@ -418,6 +418,7 @@ impl<'res> LMacInterfaceControl<'res> {
     pub async fn alloc_tx_buf(&self) -> TxBuffer {
         self.dyn_tx_buffer_manager.alloc().await
     }
+
     fn lock_channel_internal(&self, channel: u8) -> Result<(), LMacError> {
         // This will attempt to first lock the channel and then go to that channel, if it changed.
         if self.shared_state.channel_state.lock(|cs| {
@@ -451,6 +452,9 @@ impl<'res> LMacInterfaceControl<'res> {
     ///
     /// This allows implementing cancel safe connection bringup and is otherwise the same as
     /// [LMacInterfaceControl::lock_channel].
+    /// NOTE: This does not ensure, that no off channel operation is currently in progress, you'll
+    /// have to use [LMacInterfaceControl::wait_for_off_channel_completion] to wait for that.
+    ///
     /// ```ignore
     /// let bringup_operation = interface_control.begin_interface_bringup_operation(6);
     ///
@@ -462,7 +466,7 @@ impl<'res> LMacInterfaceControl<'res> {
     pub fn begin_interface_bringup_operation<'a>(
         &'a self,
         channel: u8,
-    ) -> Result<InterfaceBringupOperation<'a, 'res>, LMacError> {
+    ) -> Result<InterfaceBringupOperation<'res, 'a>, LMacError> {
         match self.lock_channel_internal(channel) {
             Ok(_) => {
                 debug!(
@@ -613,6 +617,14 @@ impl<'res> LMacInterfaceControl<'res> {
             .get_channel_state()
             .off_channel_operation_interface
     }
+    /// Returns the currently locked channel.
+    pub fn home_channel(&self) -> Option<u8> {
+        self.shared_state
+            .get_channel_state()
+            .locks
+            .map(|(_locks, channel)| channel)
+    }
+
     /// Returns the id of the filter interface.
     pub fn get_filter_interface(&self) -> usize {
         self.rx_filter_interface

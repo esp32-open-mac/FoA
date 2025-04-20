@@ -10,11 +10,13 @@ use embassy_time::{Duration, Ticker};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
+    rx_router::RxRouterQueue,
     LMacInterfaceControl, ReceivedFrame, RxQueueReceiver,
 };
 use ieee80211::{
     common::{DataFrameSubtype, FCFFlags, FrameType, SequenceControl},
     data_frame::{header::DataFrameHeader, DataFrame, DataFrameReadPayload},
+    mac_parser::MACAddress,
     match_frames,
     mgmt_frame::{BeaconFrame, DeauthenticationFrame},
     scroll::{Pread, Pwrite},
@@ -255,6 +257,12 @@ impl RoutingRunner<'_, '_> {
         rx_runner.rx_done(written);
         trace!("Received {} bytes from {}", written, source_address);
     }
+    fn connecting_mac_address(&self) -> Option<MACAddress> {
+        self.rx_router_input
+            .operation(RxRouterQueue::Foreground)
+            .or_else(|| self.rx_router_input.operation(RxRouterQueue::Background))
+            .and_then(StaRxRouterOperation::connecting_mac_address)
+    }
     /// Run the routing task.
     async fn run(&mut self) -> ! {
         loop {
@@ -274,11 +282,7 @@ impl RoutingRunner<'_, '_> {
                     .connection_state
                     .connection_info()
                     .map(|connection_info| connection_info.own_address)
-                    .or_else(|| {
-                        self.rx_router_input
-                            .current_operation()
-                            .and_then(StaRxRouterOperation::connecting_mac_address)
-                    })
+                    .or_else(|| self.connecting_mac_address())
                 {
                     if own_address != address_1 {
                         continue;
