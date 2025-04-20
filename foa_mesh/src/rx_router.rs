@@ -1,5 +1,7 @@
 use crate::RX_QUEUE_DEPTH;
-use foa::rx_router::{RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation};
+use foa::rx_router::{
+    HasScanOperation, RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation,
+};
 use ieee80211::{
     GenericFrame,
     common::{FrameType, ManagementFrameSubtype},
@@ -10,8 +12,11 @@ use ieee80211::{
 pub enum MeshRxRouterOperation {
     Scanning,
 }
+impl HasScanOperation for MeshRxRouterOperation {
+    const SCAN_OPERATION: Self = Self::Scanning;
+}
 impl RxRouterOperation for MeshRxRouterOperation {
-    fn frame_relevant_for_operation(&self, generic_frame: GenericFrame<'_>) -> bool {
+    fn frame_relevant_for_operation(&self, generic_frame: &GenericFrame<'_>) -> bool {
         let frame_type = generic_frame.frame_control_field().frame_type();
         match self {
             MeshRxRouterOperation::Scanning => matches!(
@@ -23,6 +28,5 @@ impl RxRouterOperation for MeshRxRouterOperation {
 }
 pub type MeshRxRouter<'foa> = RxRouter<'foa, RX_QUEUE_DEPTH, MeshRxRouterOperation>;
 pub type MeshRxRouterEndpoint<'foa, 'router> =
-    RxRouterEndpoint<'foa, 'router, RX_QUEUE_DEPTH, MeshRxRouterOperation>;
-pub type MeshRxRouterInput<'foa, 'router> =
-    RxRouterInput<'foa, 'router, RX_QUEUE_DEPTH, MeshRxRouterOperation>;
+    RxRouterEndpoint<'foa, 'router, MeshRxRouterOperation>;
+pub type MeshRxRouterInput<'foa, 'router> = RxRouterInput<'foa, 'router, MeshRxRouterOperation>;
