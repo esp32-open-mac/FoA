@@ -1,6 +1,6 @@
 #![no_std]
 
-use embassy_net_driver_channel::{self as ch, Device as NetDevice, driver::HardwareAddress};
+use embassy_net_driver_channel::{self as ch, driver::HardwareAddress, Device as NetDevice};
 use esp_config::esp_config_int;
 use foa::VirtualInterface;
 use rx_router::MeshRxRouter;
