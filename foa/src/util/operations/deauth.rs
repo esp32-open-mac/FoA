@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use foa::{
+use crate::{
     esp_wifi_hal::{TxParameters, WiFiRate},
     LMacInterfaceControl,
 };
@@ -12,23 +12,34 @@ use ieee80211::{
     scroll::Pwrite,
 };
 
-use crate::StaError;
-
-/// This will transmit a deauth frame to the AP, but not unlock the channel.
-pub async fn send_deauth(
+/// This will transmit a deauthentication frame.
+///
+/// The value of the RA and TA fields are shown in the table below.
+///
+/// `to_ap` | RA | TA
+/// -- | -- | --
+/// `true` | BSSID | STA address
+/// `false` | STA address | BSSID
+pub async fn deauthenticate(
     interface_control: &LMacInterfaceControl<'_>,
     bssid: MACAddress,
-    own_address: MACAddress,
+    sta_address: MACAddress,
+    to_ap: bool,
     phy_rate: WiFiRate,
-) -> Result<(), StaError> {
+) {
     let mut tx_buf = interface_control.alloc_tx_buf().await;
+    let (receiver_address, transmitter_address) = if to_ap {
+        (bssid, sta_address)
+    } else {
+        (sta_address, bssid)
+    };
     let written = tx_buf
         .pwrite(
             DeauthenticationFrame {
                 header: ManagementFrameHeader {
-                    receiver_address: bssid,
+                    receiver_address,
                     bssid,
-                    transmitter_address: own_address,
+                    transmitter_address,
                     sequence_control: SequenceControl::new(),
                     ..Default::default()
                 },
@@ -40,7 +51,7 @@ pub async fn send_deauth(
             },
             0,
         )
-        .map_err(|_| StaError::TxBufferTooSmall)?;
+        .unwrap();
     let _ = interface_control
         .transmit(
             &mut tx_buf[..written],
@@ -51,5 +62,4 @@ pub async fn send_deauth(
             true,
         )
         .await;
-    Ok(())
 }

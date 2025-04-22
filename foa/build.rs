@@ -22,12 +22,6 @@ fn main() {
                 Value::Integer(10),
                 Some(Validator::PositiveInteger),
             ),
-            (
-                "tx_buffer_size",
-                "Size of a TX buffer",
-                Value::Integer(1600),
-                Some(Validator::PositiveInteger),
-            ),
         ],
         true,
     );

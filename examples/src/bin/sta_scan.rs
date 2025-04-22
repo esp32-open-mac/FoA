@@ -39,9 +39,9 @@ async fn main(_spawner: Spawner) {
     let (mut sta_control, mut sta_runner, _net_device) =
         foa_sta::new_sta_interface(&mut sta_vif, sta_resources, Rng::new(peripherals.RNG));
     join3(foa_runner.run(), sta_runner.run(), async {
-        let mut found_bss = heapless::Vec::new();
+        let mut found_bss = heapless::FnvIndexMap::new();
         let _ = sta_control.scan::<32>(None, &mut found_bss).await;
-        for bss in found_bss {
+        for (_, bss) in found_bss {
             info!(
                 "Found BSS, with SSID: \"{}\", BSSID: {}, channel: {}, last RSSI: {}.",
                 bss.ssid, bss.bssid, bss.channel, bss.last_rssi

@@ -17,6 +17,7 @@ defmt-or-log = { version = "0.2.1", default-features = false }
 defmt = { version = "0.3.10", optional = true }
 embassy-time = "0.4.0"
 ieee80211 = { version = "0.5.4", default-features = false }
+heapless = "0.8.0"
 
 [build-dependencies]
 esp-config = { version = "0.3.0", features = ["build"] }

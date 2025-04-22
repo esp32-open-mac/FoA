@@ -31,7 +31,7 @@
 //! depending on the currently active operation. The [RxRouterEndpoint]s should be passed to the
 //! entity handling foreground operations (usually user control) and the background task, where
 //! they can be used to receive frames and start operations with
-//! [RxRouterEndpoint::start_router_operation]. The returned [RxRouterScopedOperation]
+//! [RxRouterEndpoint::start_operation]. The returned [RxRouterScopedOperation]
 //! auto-terminates, when it's dropped.
 //!
 //! ### Important Note:
@@ -271,7 +271,7 @@ impl<'foa, Operation: RxRouterOperation> RxRouterInput<'foa, '_, Operation> {
 /// A scoped router operation.
 ///
 /// The operation will end, if either [RxRouterScopedOperation::complete] or this is dropped.
-/// To start a scoped router operation call [RxRouterEndpoint::start_router_operation].
+/// To start a scoped router operation call [RxRouterEndpoint::start_operation].
 pub struct RxRouterScopedOperation<'foa, 'router, 'endpoint, Operation: RxRouterOperation> {
     endpoint: &'endpoint RxRouterEndpoint<'foa, 'router, Operation>,
 }

@@ -1,7 +1,7 @@
 use core::{marker::PhantomData, mem};
 
 use embassy_futures::join::join;
-use embassy_time::{with_timeout, Duration};
+use embassy_time::{Duration, WithTimeout};
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
     LMacInterfaceControl, ReceivedFrame,
@@ -58,9 +58,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
     ) -> Result<ReceivedFrame<'_>, StaError> {
         // Allocate a TX buffer and serialize the frame.
         let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
-        let written = tx_buffer
-            .pwrite(tx_frame, 0)
-            .map_err(|_| StaError::TxBufferTooSmall)?;
+        let written = tx_buffer.pwrite(tx_frame, 0).unwrap();
         for _ in 0..=self.connection_parameters.retries {
             let res = self
                 .sta_tx_rx
@@ -79,11 +77,10 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             }
             // Due to the user operation being set to authenticating, we'll only receive authentication
             // frames.
-            if let Ok(frame) = with_timeout(
-                self.connection_parameters.timeout,
-                router_operation.receive(),
-            )
-            .await
+            if let Ok(frame) = router_operation
+                .receive()
+                .with_timeout(self.connection_parameters.timeout)
+                .await
             {
                 return Ok(frame);
             } else {

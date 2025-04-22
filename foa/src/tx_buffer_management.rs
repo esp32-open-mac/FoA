@@ -11,6 +11,8 @@ use embassy_sync::{
     channel::{self, Channel, DynamicReceiver, DynamicSender},
 };
 
+use crate::TX_BUFFER_SIZE;
+
 /// A TX buffer borrowed from the TX buffer manager.
 ///
 /// When dropped, this will automatically return the buffer to the TX buffer manager it was
@@ -28,12 +30,12 @@ pub struct TxBuffer<'res> {
     /// to it. Due to this, the pointer can never be dangling.
     /// The buffer queue also ensures, that only one [TxBuffer] can point to a certain buffer, so
     /// no race conditions can occur.
-    buffer: NonNull<[u8]>,
+    buffer: NonNull<[u8; TX_BUFFER_SIZE]>,
     /// A sender to the buffer queue.
-    sender: channel::DynamicSender<'res, NonNull<[u8]>>,
+    sender: channel::DynamicSender<'res, NonNull<[u8; TX_BUFFER_SIZE]>>,
 }
 impl Deref for TxBuffer<'_> {
-    type Target = [u8];
+    type Target = [u8; TX_BUFFER_SIZE];
     fn deref(&self) -> &Self::Target {
         unsafe { self.buffer.as_ref() }
     }
@@ -56,8 +58,8 @@ impl Drop for TxBuffer<'_> {
 /// A dynamic [TxBufferManager], with generics elided.
 #[derive(Clone, Copy)]
 pub(crate) struct DynTxBufferManager<'res> {
-    buffer_sender: DynamicSender<'res, NonNull<[u8]>>,
-    buffer_receiver: DynamicReceiver<'res, NonNull<[u8]>>,
+    buffer_sender: DynamicSender<'res, NonNull<[u8; TX_BUFFER_SIZE]>>,
+    buffer_receiver: DynamicReceiver<'res, NonNull<[u8; TX_BUFFER_SIZE]>>,
 }
 impl<'res> DynTxBufferManager<'res> {
     /// Allocate a new [TxBuffer].
@@ -73,20 +75,18 @@ impl<'res> DynTxBufferManager<'res> {
 
 /// A struct managing the allocation of [TxBuffer]s from a pre-allocated slab of memory.
 pub(crate) struct TxBufferManager<const TX_BUFFER_COUNT: usize> {
-    buffer_queue: channel::Channel<NoopRawMutex, NonNull<[u8]>, TX_BUFFER_COUNT>,
+    buffer_queue: channel::Channel<NoopRawMutex, NonNull<[u8; TX_BUFFER_SIZE]>, TX_BUFFER_COUNT>,
 }
 impl<const TX_BUFFER_COUNT: usize> TxBufferManager<TX_BUFFER_COUNT> {
     /// Create a new [TxBufferManager], with the provided buffers.
     ///
     /// SAFETY:
     /// You must ensure, that the buffers outlive the TX buffer manager.
-    pub unsafe fn new<const TX_BUFFER_SIZE: usize>(
-        buffers: &mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
-    ) -> Self {
+    pub unsafe fn new(buffers: &mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT]) -> Self {
         let buffer_queue = Channel::new();
 
         for buffer in buffers {
-            let _ = buffer_queue.try_send(NonNull::from(buffer.as_mut_slice()));
+            let _ = buffer_queue.try_send(NonNull::from(buffer));
         }
 
         Self { buffer_queue }

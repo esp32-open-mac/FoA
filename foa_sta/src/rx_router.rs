@@ -1,6 +1,7 @@
 use crate::RX_QUEUE_DEPTH;
-use foa::rx_router::{
-    RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation, RxRouterScopedOperation,
+use foa::util::rx_router::{
+    HasScanOperation, RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation,
+    RxRouterScopedOperation,
 };
 use ieee80211::{
     common::{FrameType, ManagementFrameSubtype},
@@ -47,6 +48,9 @@ impl RxRouterOperation for StaRxRouterOperation {
             )
         }
     }
+}
+impl HasScanOperation for StaRxRouterOperation {
+    const SCAN_OPERATION: Self = Self::Scanning;
 }
 
 pub type StaRxRouterScopedOperation<'foa, 'router, 'endpoint> =

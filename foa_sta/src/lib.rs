@@ -32,7 +32,8 @@ use ieee80211::{
 
 use embassy_net_driver_channel::{self as ch};
 use foa::{
-    esp_wifi_hal::WiFiRate, rx_router::RxRouter, LMacError, LMacInterfaceControl, VirtualInterface,
+    esp_wifi_hal::WiFiRate, util::rx_router::RxRouter, LMacError, LMacInterfaceControl,
+    VirtualInterface,
 };
 
 #[macro_use]
@@ -46,7 +47,6 @@ use rand_core::RngCore;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
-pub use operations::scan::ScanConfig;
 mod rx_router;
 use rx_router::StaRxRouter;
 
@@ -56,8 +56,6 @@ use rx_router::StaRxRouter;
 pub enum StaError {
     /// An error occured in the lower MAC.
     LMacError(LMacError),
-    /// The TX buffers provided by the LMAC are too small. This is a config issue with FoA.
-    TxBufferTooSmall,
     /// The scan was unable to find the specified ESS.
     UnableToFindEss,
     /// No ACK was received in time.
