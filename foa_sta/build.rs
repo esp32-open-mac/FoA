@@ -1,28 +1,7 @@
-use esp_config::{generate_config, Validator, Value};
+use esp_config::generate_config_from_yaml_definition;
 
 fn main() {
-    generate_config(
-        "foa_sta",
-        &[
-            (
-                "RX_QUEUE_DEPTH",
-                "The depth of the user and background RX queues.",
-                Value::Integer(4),
-                Some(Validator::PositiveInteger),
-            ),
-            (
-                "NET_TX_BUFFERS",
-                "The amount of TX buffers used for embassy_net_driver_channel.",
-                Value::Integer(4),
-                Some(Validator::PositiveInteger),
-            ),
-            (
-                "NET_RX_BUFFERS",
-                "The amount of RX buffers used for embassy_net_driver_channel.",
-                Value::Integer(4),
-                Some(Validator::PositiveInteger),
-            ),
-        ],
-        true,
-    );
+    println!("cargo:rerun-if-changed=./foa_sta_config.yml");
+    let cfg_yaml = std::fs::read_to_string("./foa_sta_config.yml").unwrap();
+    let _ = generate_config_from_yaml_definition(&cfg_yaml, true, true, None).unwrap();
 }

@@ -1,0 +1,24 @@
+crate: foa_sta
+
+options:
+  - name: rx_queue_depth
+    description: The depth of the user and background RX queues.
+    default:
+      - value: 4
+    constraints:
+      - type:
+          validator: positive_integer
+  - name: net_tx_buffers
+    description: The amount of TX buffers used for embassy_net_driver_channel.
+    default:
+      - value: 4
+    constraints:
+      - type:
+          validator: positive_integer
+  - name: net_rx_buffers
+    description: The amount of RX buffers used for embassy_net_driver_channel.
+    default:
+      - value: 4
+    constraints:
+      - type:
+          validator: positive_integer

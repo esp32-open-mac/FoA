@@ -1,9 +1,7 @@
 use core::net::Ipv6Addr;
 
 use embassy_time::Duration;
-use foa::{esp_wifi_hal::RxFilterBank, LMacInterfaceControl};
-use ieee80211::mac_parser::MACAddress;
-use rand_core::RngCore;
+use foa::{esp_wifi_hal::prelude::RxFilterBank, util::random_mac_address, LMacInterfaceControl};
 
 use crate::{
     hw_address_to_ipv6,
@@ -14,34 +12,25 @@ use crate::{
 };
 
 /// Control interface for the AWDL interface.
-pub struct AwdlControl<'foa, 'vif, Rng: RngCore> {
+pub struct AwdlControl<'foa, 'vif> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) common_resources: &'vif CommonResources,
-    pub(crate) rng: Rng,
     pub(crate) channel: u8,
-    pub(crate) mac_address: MACAddress,
+    pub(crate) mac_address: [u8; 6],
 }
-impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
+impl AwdlControl<'_, '_> {
     /// Set and enable all filters required for the interface.
     fn enable_filters(&self) {
         self.interface_control
-            .set_filter_parameters(RxFilterBank::BSSID, *AWDL_BSSID, None);
+            .set_filter(RxFilterBank::Bssid, AWDL_BSSID);
         self.interface_control
-            .set_filter_status(RxFilterBank::BSSID, true);
-        self.interface_control.set_filter_parameters(
-            RxFilterBank::ReceiverAddress,
-            *self.mac_address,
-            None,
-        );
-        self.interface_control
-            .set_filter_status(RxFilterBank::ReceiverAddress, true);
+            .set_filter(RxFilterBank::ReceiverAddress, self.mac_address);
     }
     /// Disable all filter for the interface.
     fn disable_filters(&self) {
+        self.interface_control.clear_filter(RxFilterBank::Bssid);
         self.interface_control
-            .set_filter_status(RxFilterBank::BSSID, false);
-        self.interface_control
-            .set_filter_status(RxFilterBank::ReceiverAddress, false);
+            .clear_filter(RxFilterBank::ReceiverAddress);
     }
     /// Start an AWDL session.
     ///
@@ -90,16 +79,17 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     ///
     /// This will only take effect after restarting the interface.
     pub fn set_mac_address(&mut self, mac_address: [u8; 6]) {
-        self.mac_address = MACAddress::new(mac_address);
+        self.mac_address = mac_address;
+    }
+    /// Get the MAC address of the interface.
+    pub fn mac_address(&self) -> [u8; 6] {
+        self.mac_address
     }
     /// Randomize the MAC address.
     ///
     /// This will also return the MAC address.
     pub fn randomize_mac_address(&mut self) -> [u8; 6] {
-        let mut mac_address = [0x00; 6];
-        self.rng.fill_bytes(mac_address.as_mut_slice());
-        // By clearing the LSB of the first octet, we ensure that the local bit isn't set.
-        mac_address[0] &= !(1);
+        let mac_address = random_mac_address();
         self.set_mac_address(mac_address);
         mac_address
     }
@@ -107,7 +97,11 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     pub fn own_ipv6_addr(&self) -> Ipv6Addr {
         hw_address_to_ipv6(&self.mac_address)
     }
-    pub fn inspect_peers(&self, f: impl FnMut((&MACAddress, &AwdlPeer))) {
+    /// Inspect the peers, that are currently in cache.
+    ///
+    /// The provided closure will be called for every cached peer, with the first parameter being
+    /// the peers address and the second a reference to the peer.
+    pub fn inspect_peers(&self, f: impl FnMut((&[u8; 6], &AwdlPeer))) {
         self.common_resources
             .lock_peer_cache(move |peer_cache| peer_cache.inspect_peers(f));
     }

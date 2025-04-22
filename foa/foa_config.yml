@@ -1,0 +1,24 @@
+crate: foa
+
+options:
+  - name: rx_buffer_count
+    description: Amount of RX buffers
+    default: 
+      - value: 10
+    constraints:
+      - type:
+          validator: positive_integer
+  - name: rx_queue_len
+    description: Length of the RX queue
+    default:
+      - value: 2
+    constraints:
+      - type:
+          validator: positive_integer
+  - name: tx_buffer_count
+    description: Amount of TX buffers
+    default: 
+      - value: 10
+    constraints:
+      - type:
+          validator: positive_integer

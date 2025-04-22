@@ -5,26 +5,24 @@ use defmt_or_log::{debug, error, trace};
 use embassy_net_driver_channel::TxRunner;
 use embassy_time::{Duration, Timer};
 use ether_type::EtherType;
-use foa::{
-    esp_wifi_hal::{TxParameters, WiFiRate},
-    LMacInterfaceControl,
-};
+use foa::{esp_wifi_hal::prelude::*, RetryBehaviour, TxEndpoint};
 use ieee80211::{data_frame::builder::DataFrameBuilder, mac_parser::MACAddress, scroll::Pwrite};
 use llc_rs::SnapLlcFrame;
-use smoltcp::wire::{
-    EthernetFrame, EthernetProtocol, Icmpv6Message, Icmpv6Packet, IpProtocol, Ipv6Packet,
-};
+use smoltcp::wire::EthernetFrame;
+#[cfg(feature = "ndp-inject")]
+use smoltcp::wire::{EthernetProtocol, Icmpv6Message, Icmpv6Packet, IpProtocol, Ipv6Packet};
 
 use crate::{peer::OverlapSlotState, state::CommonResources, APPLE_OUI, AWDL_BSSID, AWDL_MTU};
 
 /// Handles transmission of MSDUs.
 pub struct AwdlMsduTxRunner<'foa, 'vif> {
-    pub interface_control: &'vif LMacInterfaceControl<'foa>,
     pub tx_runner: TxRunner<'vif, AWDL_MTU>,
+    pub tx_endpoint: &'vif TxEndpoint<'foa>,
     pub common_resources: &'vif CommonResources,
 }
 impl AwdlMsduTxRunner<'_, '_> {
-    fn find_ndp_solicit(ipv6_payload: &[u8]) -> Option<MACAddress> {
+    #[cfg(feature = "ndp-inject")]
+    fn find_ndp_solicit(ipv6_payload: &[u8]) -> Option<[u8; 6]> {
         let ipv6_packet = Ipv6Packet::new_checked(ipv6_payload).ok()?;
         if ipv6_packet.next_header() != IpProtocol::Icmpv6 {
             return None;
@@ -38,13 +36,14 @@ impl AwdlMsduTxRunner<'_, '_> {
     }
     async fn transmit_frame(
         msdu_buffer: &mut [u8],
-        interface_control: &LMacInterfaceControl<'_>,
         common_resources: &CommonResources,
+        tx_endpoint: &TxEndpoint<'_>,
         data_frame_sequence_number: &mut u16,
     ) {
         let Ok(mut ethernet_frame) = EthernetFrame::new_checked(msdu_buffer) else {
             return;
         };
+        #[cfg(feature = "ndp-inject")]
         if ethernet_frame.ethertype() == EthernetProtocol::Ipv6 {
             if let Some(peer_address) = Self::find_ndp_solicit(ethernet_frame.payload_mut()) {
                 common_resources.ndp_inject_signal.signal(peer_address);
@@ -64,7 +63,7 @@ impl AwdlMsduTxRunner<'_, '_> {
             return;
         }
 
-        let mut tx_buffer = interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = tx_endpoint.alloc_tx_buf().await;
         match common_resources.get_common_slot_for_peer(&destination_address) {
             OverlapSlotState::OverlappingAt(timestamp) => {
                 Timer::at(timestamp + Duration::from_micros(110)).await
@@ -99,7 +98,7 @@ impl AwdlMsduTxRunner<'_, '_> {
                     },
                     _phantom: PhantomData,
                 })
-                .bssid(AWDL_BSSID)
+                .bssid(AWDL_BSSID.into())
                 .source_address(source_address)
                 .destination_address(destination_address)
                 .build(),
@@ -108,23 +107,17 @@ impl AwdlMsduTxRunner<'_, '_> {
             error!("Data frame serialization failed.");
             return;
         };
-        let res = interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate24M,
-                    ..LMacInterfaceControl::DEFAULT_TX_PARAMETERS
-                },
-                true,
-            )
-            .await;
-        if let Err(err) = res {
-            trace!(
-                "Failed to send MSDU to {}, with TX error: {:?}.",
-                ethernet_frame.dst_addr(),
-                err
-            );
-        }
+        let _ = tx_endpoint.transmit_edca(
+            EdcaAccessCategory::default(),
+            tx_buffer,
+            written,
+            TxPlcpParameters {
+                rate: OfdmRate::Mbits12.into(),
+                ..Default::default()
+            },
+            TxMacParameters::default(),
+            RetryBehaviour::RetryUntil(7),
+        );
         trace!(
             "AWDL MSDU TX. Peer: {} Length: {} bytes",
             destination_address,
@@ -139,8 +132,8 @@ impl AwdlMsduTxRunner<'_, '_> {
 
             Self::transmit_frame(
                 msdu_buffer,
-                self.interface_control,
                 self.common_resources,
+                self.tx_endpoint,
                 &mut data_frame_sequence_number,
             )
             .await;

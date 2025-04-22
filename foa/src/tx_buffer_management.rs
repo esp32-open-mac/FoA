@@ -2,14 +2,15 @@
 //!
 //! You can use [LMacTransmitEndpoint::alloc_tx_buf](crate::lmac::LMacInterfaceControl::alloc_tx_buf) to wait for a TX buffer to become available.
 use core::{
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
 
-use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    channel::{self, Channel, DynamicReceiver, DynamicSender},
-};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
+use futures_util::FutureExt;
+
+use crate::{TX_BUFFER_COUNT, TX_BUFFER_SIZE};
 
 /// A TX buffer borrowed from the TX buffer manager.
 ///
@@ -28,12 +29,12 @@ pub struct TxBuffer<'res> {
     /// to it. Due to this, the pointer can never be dangling.
     /// The buffer queue also ensures, that only one [TxBuffer] can point to a certain buffer, so
     /// no race conditions can occur.
-    buffer: NonNull<[u8]>,
+    buffer: NonNull<[u8; TX_BUFFER_SIZE]>,
     /// A sender to the buffer queue.
-    sender: channel::DynamicSender<'res, NonNull<[u8]>>,
+    buffer_queue: &'res Channel<NoopRawMutex, NonNull<[u8; TX_BUFFER_SIZE]>, TX_BUFFER_COUNT>,
 }
 impl Deref for TxBuffer<'_> {
-    type Target = [u8];
+    type Target = [u8; TX_BUFFER_SIZE];
     fn deref(&self) -> &Self::Target {
         unsafe { self.buffer.as_ref() }
     }
@@ -49,53 +50,43 @@ impl Drop for TxBuffer<'_> {
         // We ignore the result here, since this can't fail, because we previously took this buffer
         // out from the queue, so the [free_capacity](channel::Channel::free_capacity) is always
         // equal to the number of [TxBuffer]s in existence.
-        let _ = self.sender.try_send(self.buffer);
-    }
-}
-
-/// A dynamic [TxBufferManager], with generics elided.
-#[derive(Clone, Copy)]
-pub(crate) struct DynTxBufferManager<'res> {
-    buffer_sender: DynamicSender<'res, NonNull<[u8]>>,
-    buffer_receiver: DynamicReceiver<'res, NonNull<[u8]>>,
-}
-impl<'res> DynTxBufferManager<'res> {
-    /// Allocate a new [TxBuffer].
-    ///
-    /// This will wait for a new buffer to become available from the buffer queue and can't fail.
-    pub async fn alloc(&self) -> TxBuffer<'res> {
-        TxBuffer {
-            buffer: self.buffer_receiver.receive().await,
-            sender: self.buffer_sender,
-        }
+        let _ = self.buffer_queue.try_send(self.buffer);
     }
 }
 
 /// A struct managing the allocation of [TxBuffer]s from a pre-allocated slab of memory.
-pub(crate) struct TxBufferManager<const TX_BUFFER_COUNT: usize> {
-    buffer_queue: channel::Channel<NoopRawMutex, NonNull<[u8]>, TX_BUFFER_COUNT>,
+pub(crate) struct TxBufferManager<'res> {
+    buffer_queue: Channel<NoopRawMutex, NonNull<[u8; TX_BUFFER_SIZE]>, TX_BUFFER_COUNT>,
+    _phantom: PhantomData<&'res ()>,
 }
-impl<const TX_BUFFER_COUNT: usize> TxBufferManager<TX_BUFFER_COUNT> {
+impl<'res> TxBufferManager<'res> {
     /// Create a new [TxBufferManager], with the provided buffers.
-    ///
-    /// SAFETY:
-    /// You must ensure, that the buffers outlive the TX buffer manager.
-    pub unsafe fn new<const TX_BUFFER_SIZE: usize>(
-        buffers: &mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
-    ) -> Self {
+    pub fn new(buffers: &'res mut [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT]) -> Self {
         let buffer_queue = Channel::new();
 
         for buffer in buffers {
-            let _ = buffer_queue.try_send(NonNull::from(buffer.as_mut_slice()));
+            let _ = buffer_queue.try_send(NonNull::from(buffer));
         }
 
-        Self { buffer_queue }
-    }
-    /// Acquire a [DynTxBufferManager].
-    pub fn dyn_tx_buffer_manager(&self) -> DynTxBufferManager<'_> {
-        DynTxBufferManager {
-            buffer_sender: self.buffer_queue.dyn_sender(),
-            buffer_receiver: self.buffer_queue.dyn_receiver(),
+        Self {
+            buffer_queue,
+            _phantom: PhantomData,
         }
+    }
+    /// Allocate a [TxBuffer].
+    ///
+    /// This will wait for a new buffer to become available from the buffer queue and can't fail.
+    pub fn alloc(&self) -> impl Future<Output = TxBuffer<'_>> + use<'_> {
+        self.buffer_queue.receive().map(|buffer| TxBuffer {
+            buffer,
+            buffer_queue: &self.buffer_queue,
+        })
+    }
+    /// Try allocating a [TxBuffer].
+    pub fn try_alloc(&self) -> Option<TxBuffer<'_>> {
+        self.buffer_queue.try_receive().ok().map(|buffer| TxBuffer {
+            buffer,
+            buffer_queue: &self.buffer_queue,
+        })
     }
 }

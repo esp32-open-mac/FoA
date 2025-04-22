@@ -1,5 +1,5 @@
 #![no_std]
-
+#![deny(missing_docs)]
 //! This crate implements a station (STA) interface for FoA.
 //!
 //! ## Usage
@@ -16,23 +16,33 @@
 //! ### Supported operations.
 //! 1. Passive scanning
 //! 2. Connecting to a network.
+//!     - Both Open and WPA2-PSK encrypted networks
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
+//!
+//! ## A note about the WPA2 implementation
+//! `foa_sta` has an implementation of WPA2-PSK, which allows it to connect to networks using that
+//! cipher suite. It is however extremely basic and in very early stages of development. This means
+//! that it may crash at any point during the connection process and is not very secure. Most of
+//! this is down to the way it is written, which was intended to get it working and figure out how
+//! to do this at all. A new design using a state machine is already in the works, but it will take
+//! some time to be ready.
+//!
+//! (Frostie314159): The reason this will take a while is, because I worked on WPA2 for two months
+//! straight to get it working and sorta need to take my mind of it for a while.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
-use embassy_net::driver::HardwareAddress;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
-use embassy_time::Duration;
+use connection_state::ConnectionStateTracker;
+use embassy_net_driver::HardwareAddress;
+use embassy_sync::blocking_mutex::NoopMutex;
 use esp_config::esp_config_int;
-use ieee80211::{
-    common::{AssociationID, IEEE80211StatusCode},
-    mac_parser::MACAddress,
-};
+use ieee80211::{common::IEEE80211StatusCode, mac_parser::MACAddress};
 
 use embassy_net_driver_channel::{self as ch};
 use foa::{
-    esp_wifi_hal::WiFiRate, rx_router::RxRouter, LMacError, LMacInterfaceControl, VirtualInterface,
+    LMacError, LMacInterfaceControl, TxEndpoint, VirtualInterface, esp_wifi_hal::prelude::*,
+    util::rx_router::RxRouter,
 };
 
 #[macro_use]
@@ -40,15 +50,20 @@ extern crate defmt_or_log;
 
 mod control;
 pub use control::*;
+pub use operations::scan::BSS;
 
 mod runner;
-use rand_core::RngCore;
+use rsn::CryptoState;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
-pub use operations::scan::ScanConfig;
 mod rx_router;
 use rx_router::StaRxRouter;
+mod connection_state;
+pub use connection_state::ConnectionConfig;
+mod rsn;
+pub use rsn::{Credentials, SecurityConfig};
+mod util;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,8 +71,6 @@ use rx_router::StaRxRouter;
 pub enum StaError {
     /// An error occured in the lower MAC.
     LMacError(LMacError),
-    /// The TX buffers provided by the LMAC are too small. This is a config issue with FoA.
-    TxBufferTooSmall,
     /// The scan was unable to find the specified ESS.
     UnableToFindEss,
     /// No ACK was received in time.
@@ -80,95 +93,52 @@ pub enum StaError {
     InvalidBss,
     /// Another internal operation is already in progress.
     RouterOperationAlreadyInProgress,
+    /// No credentials were provided for a network, that requires them.
+    NoCredentialsForNetwork,
+    /// The 4-Way Handshake failed.
+    FourWayHandshakeFailure,
+    /// No hardware key slots were unavailable.
+    NoKeySlotsAvailable,
+    /// The provided PSK length didn't match what was expected.
+    InvalidPskLength,
+    /// The group key handshake failed.
+    GroupKeyHandshakeFailure,
 }
 
-pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
-
+/// The MTU used by the STA interface.
 pub const MTU: usize = 1514;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Information about the current connection.
-pub(crate) struct ConnectionInfo {
-    /// The address of the BSS, we're connected to.
-    pub bssid: MACAddress,
-    /// Our own address.
-    pub own_address: MACAddress,
-    /// The association ID assigned by the AP.
-    pub aid: AssociationID,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// All possible conneciton states, that the STA can be in.
-pub(crate) enum ConnectionState {
-    Disconnected,
-    Connected(ConnectionInfo),
-}
-/// Tracks the connection state.
-pub(crate) struct ConnectionStateTracker {
-    connection_state: Cell<ConnectionState>,
-    connection_state_signal: Signal<NoopRawMutex, ()>,
-}
-impl ConnectionStateTracker {
-    /// Create a new state tracker.
-    pub const fn new() -> Self {
-        Self {
-            connection_state: Cell::new(ConnectionState::Disconnected),
-            connection_state_signal: Signal::new(),
-        }
-    }
-    /// Signal a new state.
-    pub fn signal_state(&self, new_state: ConnectionState) {
-        self.connection_state.set(new_state);
-        self.connection_state_signal.signal(());
-    }
-    /// Get the connection info.
-    pub fn connection_info(&self) -> Option<ConnectionInfo> {
-        match self.connection_state.get() {
-            ConnectionState::Connected(connection_info) => Some(connection_info),
-            ConnectionState::Disconnected => None,
-        }
-    }
-    /// Wait for a connected state to be signaled.
-    pub async fn wait_for_connection(&self) -> ConnectionInfo {
-        loop {
-            let ConnectionState::Connected(connection_info) = self.connection_state.get() else {
-                self.connection_state_signal.wait().await;
-                continue;
-            };
-            break connection_info;
-        }
-    }
-    /// Wait for a disconnected state to be signaled.
-    pub async fn wait_for_disconnection(&self) {
-        while matches!(self.connection_state.get(), ConnectionState::Connected(_)) {
-            self.connection_state_signal.wait().await
-        }
-    }
-}
-
-#[derive(Clone)]
 /// TX and RX resources for the interface control and runner.
 pub(crate) struct StaTxRx<'foa, 'vif> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) connection_state: &'vif ConnectionStateTracker,
-    phy_rate: &'vif Cell<WiFiRate>,
+    pub(crate) tx_endpoint: &'vif TxEndpoint<'foa>,
+    pub(crate) crypto_state: &'vif NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
+    phy_rate: &'vif Cell<TxPhyRate>,
 }
 impl StaTxRx<'_, '_> {
     /// Reset the PHY rate.
     pub fn reset_phy_rate(&self) {
-        self.phy_rate.take();
+        self.phy_rate.set(OfdmRate::Mbits6.into());
     }
     /// Get the current PHY rate.
-    pub fn phy_rate(&self) -> WiFiRate {
+    pub fn phy_rate(&self) -> TxPhyRate {
         self.phy_rate.get()
     }
     /// Set the current PHY rate.
-    pub fn set_phy_rate(&self, phy_rate: WiFiRate) {
+    pub fn set_phy_rate(&self, phy_rate: TxPhyRate) {
         self.phy_rate.set(phy_rate);
     }
     /// Check if we are currently performing an off channel operation.
     pub fn in_off_channel_operation(&self) -> bool {
         self.interface_control.off_channel_operation_interface()
-            == Some(self.interface_control.get_filter_interface())
+            == Some(self.interface_control.interface())
+    }
+    pub fn map_crypto_state<O, F: FnMut(&mut CryptoState<'_>) -> O>(&self, f: F) -> Option<O> {
+        self.crypto_state.lock(|cs| cs.borrow_mut().as_mut().map(f))
+    }
+    pub fn rsna_activated(&self) -> bool {
+        self.map_crypto_state(|_| {}).is_some()
     }
 }
 
@@ -185,19 +155,22 @@ pub struct StaResources<'foa> {
 
     // State tracking.
     connection_state: ConnectionStateTracker,
-    phy_rate: Cell<WiFiRate>,
+    phy_rate: Cell<TxPhyRate>,
 
     // Misc.
     sta_tx_rx: Option<StaTxRx<'static, 'static>>,
+    crypto_state: NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
 }
 impl StaResources<'_> {
+    /// Create new resources for the STA interface.
     pub const fn new() -> Self {
         Self {
             rx_router: RxRouter::new(),
             channel_state: ch::State::new(),
             connection_state: ConnectionStateTracker::new(),
-            phy_rate: Cell::new(WiFiRate::PhyRate1ML),
+            phy_rate: Cell::new(TxPhyRate::Ofdm(OfdmRate::Mbits6)),
             sta_tx_rx: None,
+            crypto_state: NoopMutex::new(RefCell::new(None)),
         }
     }
 }
@@ -207,19 +180,19 @@ impl Default for StaResources<'_> {
     }
 }
 
+/// embassy_net device for the STA interface.
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
 /// Initialize a new STA interface.
-pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
+pub fn new_sta_interface<'foa: 'vif, 'vif>(
     virtual_interface: &'vif mut VirtualInterface<'foa>,
     resources: &'vif mut StaResources<'foa>,
-    rng: Rng,
 ) -> (
-    StaControl<'foa, 'vif, Rng>,
+    StaControl<'foa, 'vif>,
     StaRunner<'foa, 'vif>,
     StaNetDevice<'vif>,
 ) {
-    let (interface_control, interface_rx_queue) = virtual_interface.split();
+    let (interface_control, interface_rx_endpoint, tx_endpoint) = virtual_interface.split();
     let mac_address = interface_control.get_factory_mac_for_interface();
     // Initialize embassy_net.
     let (net_runner, net_device) = ch::new(
@@ -239,6 +212,8 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
     .insert(StaTxRx {
         interface_control,
         connection_state: &resources.connection_state,
+        tx_endpoint,
+        crypto_state: &resources.crypto_state,
         phy_rate: &resources.phy_rate,
     });
     let (state_runner, rx_runner, tx_runner) = net_runner.split();
@@ -248,7 +223,6 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
             sta_tx_rx,
             mac_address: MACAddress::new(mac_address),
             rx_router_endpoint: foreground_endpoint,
-            rng,
         },
         StaRunner {
             tx_runner,
@@ -260,7 +234,7 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
             routing_runner: RoutingRunner {
                 rx_router_input,
                 sta_tx_rx,
-                interface_rx_queue,
+                interface_rx_endpoint,
                 rx_runner,
             },
         },

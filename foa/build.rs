@@ -1,34 +1,7 @@
-use esp_config::{generate_config, Validator, Value};
+use esp_config::generate_config_from_yaml_definition;
 
 fn main() {
-    generate_config(
-        "foa",
-        &[
-            (
-                "rx_buffer_count",
-                "Amount of RX buffers",
-                Value::Integer(10),
-                Some(Validator::PositiveInteger),
-            ),
-            (
-                "rx_queue_len",
-                "Amount of frames the RX queue of an interface can hold",
-                Value::Integer(2),
-                Some(Validator::PositiveInteger),
-            ),
-            (
-                "tx_buffer_count",
-                "Amount of TX buffers",
-                Value::Integer(10),
-                Some(Validator::PositiveInteger),
-            ),
-            (
-                "tx_buffer_size",
-                "Size of a TX buffer",
-                Value::Integer(1600),
-                Some(Validator::PositiveInteger),
-            ),
-        ],
-        true,
-    );
+    println!("cargo:rerun-if-changed=./foa_config.yml");
+    let cfg_yaml = std::fs::read_to_string("./foa_config.yml").unwrap();
+    let _cfg = generate_config_from_yaml_definition(&cfg_yaml, true, true, None).unwrap();
 }

@@ -1,7 +1,7 @@
 use core::{cell::RefCell, ops::Deref, ptr::NonNull};
 
 use embassy_sync::blocking_mutex::NoopMutex;
-use esp_wifi_hal::BorrowedBuffer;
+use esp_wifi_hal::prelude::BorrowedBuffer;
 use portable_atomic::{AtomicUsize, Ordering};
 
 struct RxArcBufferInner<'res> {

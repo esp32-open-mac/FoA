@@ -4,7 +4,6 @@ use ieee80211::{
 };
 
 pub mod connect;
-pub mod deauth;
 pub mod scan;
 
 const DEFAULT_SUPPORTED_RATES: SupportedRatesElement<[EncodedRate; 8]> = supported_rates![

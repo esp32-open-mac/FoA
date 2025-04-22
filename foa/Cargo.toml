@@ -1,32 +1,46 @@
 [package]
 name = "foa"
-version = "0.1.0-alpha.0"
-edition = "2021"
+version = "0.1.1"
+authors = ["Frostie314159 <frostie.neuenhausen@gmail.com>"]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+description = "An experimental IEEE 802.11 (WLAN) stack for rust on the ESP32. "
+homepage = "https://esp32-open-mac.be/"
+repository = "https://github.com/esp32-open-mac/FoA"
 
 [dependencies]
-embassy-sync = "0.6.0"
-embassy-futures = "0.1.1"
+embassy-sync = "0.8.0"
+embassy-futures = "0.1.2"
 
-esp-hal = "1.0.0-beta.0"
-esp-wifi-hal = "0.1.0-alpha.3"
-static_cell = "2.1.0"
+esp-hal = { version = "1.0.0", default-features = false }
+esp-wifi-hal = { path = "../../esp-wifi-hal/esp-wifi-hal/" }
+static_cell = "2.1.1"
 critical-section = "1.2.0"
-portable-atomic = "1.10.0"
-esp-config= "0.3.0"
-defmt-or-log = { version = "0.2.1", default-features = false }
-defmt = { version = "0.3.10", optional = true }
-embassy-time = "0.4.0"
-ieee80211 = { version = "0.5.4", default-features = false }
+portable-atomic = { version = "1.13.1", default-features = false }
+esp-config = "0.6.0"
+defmt-or-log = { version = "0.2.3", default-features = false }
+defmt = { version = "1.0.1", optional = true }
+embassy-time = "0.5.1"
+heapless = { version = "0.9.2", features = ["defmt"] }
+ieee80211 = "0.5.9"
+log = { version = "0.4.29", optional = true }
+futures-util = { version = "0.3.32", default-features = false }
 
 [build-dependencies]
-esp-config = { version = "0.3.0", features = ["build"] }
+esp-config = { version = "0.6.1", features = ["build"] }
 
 [features]
 arc_buffers = []
+multi_rate_retry = []
 
-log = ["defmt-or-log/log", "esp-wifi-hal/log"]
-defmt = ["dep:defmt", "defmt-or-log/defmt", "esp-wifi-hal/defmt"]
+log = ["dep:log", "defmt-or-log/log", "esp-wifi-hal/log"]
+defmt = [
+    "dep:defmt",
+    "defmt-or-log/defmt",
+    "esp-wifi-hal/defmt",
+    "esp-hal/defmt",
+]
 
 esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-wifi-hal/esp32s2"]
-

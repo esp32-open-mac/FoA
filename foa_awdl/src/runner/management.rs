@@ -16,10 +16,7 @@ use awdl_frame_parser::{
 use defmt_or_log::trace;
 use embassy_futures::select::{select4, Either4};
 use embassy_time::{Duration, Instant, Ticker, Timer};
-use foa::{
-    esp_wifi_hal::{TxErrorBehaviour, TxParameters, WiFiRate},
-    LMacInterfaceControl,
-};
+use foa::{esp_wifi_hal::prelude::*, LMacInterfaceControl, TxEndpoint};
 use ieee80211::{
     common::TU,
     mac_parser::{MACAddress, BROADCAST, ZERO},
@@ -30,12 +27,16 @@ use ieee80211::{
     scroll::Pwrite,
 };
 
-use crate::{peer_cache::AwdlPeerCache, state::CommonResources, AwdlEvent, APPLE_OUI, AWDL_BSSID};
+use crate::{
+    event::PeerEventServiceParameters, peer_cache::AwdlPeerCache, state::CommonResources,
+    AwdlEvent, APPLE_OUI, AWDL_BSSID,
+};
 
 /// Runner for the AWDL interface.
 pub struct AwdlManagementRunner<'foa, 'vif> {
     pub interface_control: &'vif LMacInterfaceControl<'foa>,
     pub common_resources: &'vif CommonResources,
+    pub tx_endpoint: &'vif TxEndpoint<'foa>,
 }
 impl AwdlManagementRunner<'_, '_> {
     /// Serialize an action frame with the specified address and subtype.
@@ -43,22 +44,26 @@ impl AwdlManagementRunner<'_, '_> {
     /// Currently PSF and MIF are exactly the same.
     async fn serialize_and_send_action_frame(
         &self,
-        address: &MACAddress,
+        address: [u8; 6],
         af_type: AWDLActionFrameSubType,
     ) {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.tx_endpoint.alloc_tx_buf().await;
+        let address = MACAddress(address);
         let awdl_frame = RawVendorSpecificActionFrame {
             header: ManagementFrameHeader {
                 receiver_address: BROADCAST,
-                transmitter_address: *address,
-                bssid: AWDL_BSSID,
+                transmitter_address: address,
+                bssid: AWDL_BSSID.into(),
                 ..Default::default()
             },
             body: RawVendorSpecificActionBody {
                 oui: APPLE_OUI,
                 payload: AWDLActionFrame::<[AWDLTLV<'_, Empty<MACAddress>, Empty<AWDLStr<'_>>>; 8]> {
                     target_tx_time: core::time::Duration::from_micros(
-                        self.interface_control.mac_time() as u64,
+                        self.interface_control
+                            .mac_time()
+                            .duration_since_epoch()
+                            .as_micros(),
                     ),
                     phy_tx_time: core::time::Duration::from_micros(0),
                     subtype: af_type,
@@ -98,8 +103,8 @@ impl AwdlManagementRunner<'_, '_> {
                                 ..Default::default()
                             },
                             infra_bssid_channel: Some((ZERO, 0)),
-                            infra_address: Some(*address),
-                            awdl_address: Some(*address),
+                            infra_address: Some(address),
+                            awdl_address: Some(address),
                             country_code: Some(
                                 self.common_resources
                                     .dynamic_session_parameters
@@ -140,31 +145,38 @@ impl AwdlManagementRunner<'_, '_> {
         // We transmit using the 12 Mbit/s OFDM PHY, driver sequence number override and drop the
         // transmittion if it fails.
         let _ = self
-            .interface_control
-            .transmit_with_hook(
+            .tx_endpoint
+            .transmit_beacon_with_hook(
                 &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate12M,
-                    override_seq_num: true,
-                    tx_error_behaviour: TxErrorBehaviour::Drop,
+                TxPlcpParameters {
+                    rate: OfdmRate::Mbits12.into(),
                     ..Default::default()
                 },
-                false,
+                TxMacParameters {
+                    wait_for_ack: false,
+                    override_seq_num: true,
+                    ..Default::default()
+                },
                 |buffer| {
                     buffer[32..36].copy_from_slice(
-                        self.interface_control.mac_time().to_le_bytes().as_slice(),
+                        (self
+                            .interface_control
+                            .mac_time()
+                            .duration_since_epoch()
+                            .as_micros() as u32)
+                            .to_le_bytes()
+                            .as_slice(),
                     );
                 },
             )
             .await;
         trace!(
-            "Transmitted {} to {}.",
+            "Transmitted {}.",
             if af_type == AWDLActionFrameSubType::MIF {
                 "MIF"
             } else {
                 "PSF"
             },
-            address
         );
     }
     /// Get the timestamp for the next MIF transmission.
@@ -173,7 +185,7 @@ impl AwdlManagementRunner<'_, '_> {
             .lock_sync_state(|sync_state| sync_state.mif_transmition_time())
     }
     /// Run an AWDL session.
-    pub async fn run_session(&mut self, our_address: &MACAddress) -> ! {
+    pub async fn run_session(&mut self, our_address: &[u8; 6]) -> ! {
         // We purge stale peers and resynchronize every second.
         let mut stale_peer_ticker = Ticker::every(Duration::from_secs(1));
         let mut psf_ticker = Ticker::every(Duration::from_micros(110 * TU.as_micros() as u64));
@@ -197,9 +209,15 @@ impl AwdlManagementRunner<'_, '_> {
                         .get();
                     self.common_resources.lock_peer_cache(|mut peer_cache| {
                         peer_cache.purge_stale_peers(
-                            |address| {
+                            |address, peer| {
                                 self.common_resources
-                                    .raise_user_event(AwdlEvent::PeerDiscovered(**address));
+                                    .raise_user_event(AwdlEvent::PeerWentStale(
+                                        PeerEventServiceParameters {
+                                            address: *address,
+                                            airdrop_port: peer.airdrop_port,
+                                            airplay_port: peer.airplay_port,
+                                        },
+                                    ));
                             },
                             timeout,
                         )
@@ -208,11 +226,11 @@ impl AwdlManagementRunner<'_, '_> {
                     self.common_resources.elect_master(our_address);
                 }
                 Either4::Third(_) => {
-                    self.serialize_and_send_action_frame(our_address, AWDLActionFrameSubType::PSF)
+                    self.serialize_and_send_action_frame(*our_address, AWDLActionFrameSubType::PSF)
                         .await
                 }
                 Either4::Fourth(_) => {
-                    self.serialize_and_send_action_frame(our_address, AWDLActionFrameSubType::MIF)
+                    self.serialize_and_send_action_frame(*our_address, AWDLActionFrameSubType::MIF)
                         .await;
                 }
             }
