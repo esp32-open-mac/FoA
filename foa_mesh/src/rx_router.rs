@@ -1,5 +1,5 @@
 use crate::RX_QUEUE_DEPTH;
-use foa::rx_router::{
+use foa::util::rx_router::{
     HasScanOperation, RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation,
 };
 use ieee80211::{
