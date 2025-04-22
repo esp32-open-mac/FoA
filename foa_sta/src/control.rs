@@ -8,14 +8,16 @@ use ieee80211::{
     mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
 };
 
-use foa::esp_wifi_hal::WiFiRate;
+use foa::{
+    esp_wifi_hal::WiFiRate,
+    util::operations::{deauthenticate, ScanConfig},
+};
 use rand_core::RngCore;
 
 use crate::{
     operations::{
         connect::{self, ConnectionParameters},
-        deauth::send_deauth,
-        scan::{scan, ScanConfig, ScanType},
+        scan::{enumerate_bss, search_for_bss},
     },
     rx_router::StaRxRouterEndpoint,
     ConnectionInfo, StaTxRx,
@@ -88,34 +90,32 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
     /// Scan for networks.
     ///
     /// Invalid channels will cause an error to be returned.
-    pub async fn scan<const MAX_ESS: usize>(
-        &mut self,
-        scan_config: Option<ScanConfig<'_>>,
-        found_bss: &mut heapless::Vec<BSS, MAX_ESS>,
+    pub async fn scan<'a, const MAX_ESS: usize>(
+        &'a mut self,
+        scan_config: Option<ScanConfig<'a>>,
+        found_bss: &'a mut heapless::FnvIndexMap<[u8; 6], BSS, MAX_ESS>,
     ) -> Result<(), StaError> {
-        scan(
+        enumerate_bss(
             self.sta_tx_rx,
             &mut self.rx_router_endpoint,
             scan_config,
-            ScanType::Enumerate(found_bss),
+            found_bss,
         )
         .await
     }
     /// Look for a specific ESS and break once the first match is found.
-    pub async fn find_ess(
-        &mut self,
-        scan_config: Option<ScanConfig<'_>>,
+    pub async fn find_ess<'a>(
+        &'a mut self,
+        scan_config: Option<ScanConfig<'a>>,
         ssid: &str,
     ) -> Result<BSS, StaError> {
-        let mut ess = None;
-        scan::<0>(
+        search_for_bss(
             self.sta_tx_rx,
             &mut self.rx_router_endpoint,
             scan_config,
-            ScanType::Search(ssid, &mut ess),
+            ssid,
         )
-        .await?;
-        ess.ok_or(StaError::UnableToFindEss)
+        .await
     }
     /// Check if we're currently connected to a network.
     pub fn is_connected(&self) -> bool {
@@ -131,7 +131,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
                 return Err(StaError::SameNetwork);
             }
             debug!("Disconnecting from {}.", connection_info.bssid);
-            self.disconnect_internal(connection_info).await?;
+            self.disconnect_internal(connection_info).await;
         }
         self.sta_tx_rx.reset_phy_rate();
         let aid = connect::connect(
@@ -172,7 +172,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         ConnectionInfo {
             bssid, own_address, ..
         }: ConnectionInfo,
-    ) -> Result<(), StaError> {
+    ) {
         // NOTE: The channel is already unlocked here, but since there's no await-point between
         // unlocking the channel and transmitting the deauth, no other interface could attempt to
         // lock it before we're done here.
@@ -180,13 +180,14 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
             .connection_state
             .signal_state(ConnectionState::Disconnected);
         self.sta_tx_rx.reset_phy_rate();
-        send_deauth(
+        deauthenticate(
             self.sta_tx_rx.interface_control,
             bssid,
             own_address,
+            true,
             self.sta_tx_rx.phy_rate(),
         )
-        .await
+        .await;
     }
     /// Disconnect from the current network.
     pub async fn disconnect(&mut self) -> Result<(), StaError> {
@@ -194,7 +195,7 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
             return Err(StaError::NotConnected);
         };
         self.sta_tx_rx.interface_control.unlock_channel();
-        self.disconnect_internal(connection_info).await?;
+        self.disconnect_internal(connection_info).await;
         debug!("Disconnected from {}", connection_info.bssid);
         Ok(())
     }

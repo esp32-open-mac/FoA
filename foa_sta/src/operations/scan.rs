@@ -1,162 +1,71 @@
-use embassy_time::{with_timeout, Duration};
-use foa::esp_wifi_hal::ScanningMode;
-use ieee80211::{mgmt_frame::BeaconFrame, scroll::Pread};
+use foa::util::operations::{PostChannelScanAction, ScanConfig};
 
-use crate::{
-    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation, StaRxRouterScopedOperation},
-    StaError, StaTxRx, BSS,
-};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ScanStrategy<'a> {
-    Single(u8),
-    CurrentChannel,
-    Linear,
-    #[default]
-    NonOverlappingFirst,
-    Custom(&'a [u8]),
-}
-
-/// Configuration for a scan.
+use crate::{rx_router::StaRxRouterEndpoint, StaError, StaTxRx, BSS};
+/// Search for a BSS, with the specified [ScanConfig].
 ///
-/// This allows configuring how the scan is performed and on which channels.
-pub struct ScanConfig<'a> {
-    /// The time we should remain on one channel, before jumping to the next one.
-    ///
-    /// The default is 200 ms. It is not recommended, to go below 100 ms, since that's the beacon
-    /// interval of almost every network.
-    pub channel_remain_time: Duration,
-    /// The strategy, that should be used to scan channels.
-    pub strategy: ScanStrategy<'a>,
-}
-impl Default for ScanConfig<'_> {
-    fn default() -> Self {
-        Self {
-            channel_remain_time: Duration::from_millis(200),
-            strategy: ScanStrategy::default(),
-        }
-    }
-}
-pub enum ScanType<'a, const MAX_BSS: usize = 0> {
-    Search(&'a str, &'a mut Option<BSS>),
-    Enumerate(&'a mut heapless::Vec<BSS, MAX_BSS>),
-}
-async fn search_for_bss_on_channel(
-    router_operation: &StaRxRouterScopedOperation<'_, '_, '_>,
-    channel_remain_time: Duration,
-    search_ssid: &str,
-    bss_dst: &mut Option<BSS>,
-) {
-    let _ = with_timeout(channel_remain_time, async {
-        loop {
-            let received = router_operation.receive().await;
-            let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
-                continue;
-            };
-            let Some(beacon_ssid) = beacon_frame.ssid() else {
-                continue;
-            };
-            if beacon_ssid == search_ssid {
-                let Some(bss) = BSS::from_beacon_like(beacon_frame, received.rssi()) else {
-                    continue;
-                };
-                *bss_dst = Some(bss);
-                break;
-            }
-        }
-    })
-    .await;
-}
-async fn enumerate_bss_on_channel<const MAX_BSS: usize>(
-    router_operation: &StaRxRouterScopedOperation<'_, '_, '_>,
-    channel_remain_time: Duration,
-    dst: &mut heapless::Vec<BSS, MAX_BSS>,
-) {
-    let _ = with_timeout(channel_remain_time, async {
-        loop {
-            let received = router_operation.receive().await;
-            let Ok(beacon_frame) = received.mpdu_buffer().pread::<BeaconFrame>(0) else {
-                continue;
-            };
-            let Some(beacon_ssid) = beacon_frame.ssid() else {
-                continue;
-            };
-            if let Some(bss) = dst.iter_mut().find(|bss| bss.ssid == beacon_ssid) {
-                bss.last_rssi = received.rssi();
-            } else {
-                let Some(bss) = BSS::from_beacon_like(beacon_frame, received.rssi()) else {
-                    continue;
-                };
-                let _ = dst.push(bss);
-            }
-        }
-    })
-    .await;
-}
-/// Scan for ESS's, with the specified [ScanConfig].
-///
-/// If a beacon frame is received, the [BorrowedBuffer] is passed to `beacon_rx_cb`. If that
-/// returns `false`, we end the scan. This can be used to implement searching for a specific
-/// ESS and stopping once it's found.
-pub async fn scan<'foa, 'vif, 'params, const MAX_BSS: usize>(
+/// This will return immediately when the first beacon with the specified SSID is received.
+pub async fn search_for_bss<'foa, 'vif, 'params>(
     sta_tx_rx: &'params StaTxRx<'foa, 'vif>,
     rx_router_endpoint: &'params mut StaRxRouterEndpoint<'foa, 'vif>,
-    scan_config: Option<ScanConfig<'_>>,
-    mut scan_type: ScanType<'_, MAX_BSS>,
-) -> Result<(), StaError> {
-    // We begin the off channel operation.
-    let mut off_channel_operation = sta_tx_rx
-        .interface_control
-        .begin_interface_off_channel_operation()
-        .await
-        .map_err(StaError::LMacError)?;
-
-    // We get the scan configuration.
-    let scan_config = scan_config.unwrap_or_default();
-
-    // Determine the channels, that should be scanned through the strategy.
-    let channels = match scan_config.strategy {
-        ScanStrategy::Single(channel) => &[channel],
-        ScanStrategy::CurrentChannel => &[sta_tx_rx.interface_control.get_current_channel()],
-        ScanStrategy::Linear => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].as_slice(),
-        ScanStrategy::NonOverlappingFirst => [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10].as_slice(),
-        ScanStrategy::Custom(channels) => channels,
-    };
-    debug!("ESS scan started. Scanning channels: {:?}", channels);
-    // Setup scanning mode, by configuring the RX router to route beacons to us, setting the scanning mode and clearing
-    // the RX queue, so every frame received after this is a beacon.
-    let router_operation = rx_router_endpoint
-        .start_operation(StaRxRouterOperation::Scanning)
-        .await;
-    off_channel_operation.set_scanning_mode(ScanningMode::BeaconsOnly);
-
-    // Loop through channels.
-    for channel in channels {
-        off_channel_operation
-            .set_channel(*channel)
-            .map_err(StaError::LMacError)?;
-        match &mut scan_type {
-            ScanType::Search(search_ssid, bss_dst) => {
-                search_for_bss_on_channel(
-                    &router_operation,
-                    scan_config.channel_remain_time,
-                    search_ssid,
-                    bss_dst,
-                )
-                .await;
-                if bss_dst.is_some() {
-                    break;
-                }
+    scan_config: Option<ScanConfig<'params>>,
+    ssid: &str,
+) -> Result<BSS, StaError> {
+    match foa::util::operations::scan::<_, BSS>(
+        sta_tx_rx.interface_control,
+        rx_router_endpoint,
+        |beacon_frame, received_frame, _channel| {
+            if beacon_frame.ssid() != Some(ssid) {
+                return PostChannelScanAction::Continue;
             }
-            ScanType::Enumerate(dst) => {
-                enumerate_bss_on_channel(&router_operation, scan_config.channel_remain_time, dst)
-                    .await
-            }
-        }
+            let Some(bss) = BSS::from_beacon_like(beacon_frame, received_frame.rssi()) else {
+                return PostChannelScanAction::Continue;
+            };
+            PostChannelScanAction::Stop(bss)
+        },
+        scan_config,
+    )
+    .await
+    {
+        Ok(Some(bss)) => Ok(bss),
+        Ok(None) => Err(StaError::UnableToFindEss),
+        Err(lmac_error) => Err(StaError::LMacError(lmac_error)),
     }
-
-    debug!("ESS scan complete.");
-    router_operation.complete();
-
-    Ok(())
+}
+/// Enumerate all BSS's, with the specified [ScanConfig].
+///
+/// The key of the `bss_list` is the BSSID ID, of the network.
+/// This will run until either all channels have been scanned, or the `bss_list` is full.
+pub async fn enumerate_bss<'foa, 'vif, 'params, const MAX_BSS: usize>(
+    sta_tx_rx: &'params StaTxRx<'foa, 'vif>,
+    rx_router_endpoint: &'params mut StaRxRouterEndpoint<'foa, 'vif>,
+    scan_config: Option<ScanConfig<'params>>,
+    bss_list: &'params mut heapless::FnvIndexMap<[u8; 6], BSS, MAX_BSS>,
+) -> Result<(), StaError> {
+    foa::util::operations::scan::<_, ()>(
+        sta_tx_rx.interface_control,
+        rx_router_endpoint,
+        |beacon_frame, received_frame, _channel| {
+            if bss_list.contains_key(&*beacon_frame.header.bssid) {
+                return PostChannelScanAction::Continue;
+            }
+            if bss_list.len() == bss_list.capacity() {
+                trace!(
+                    "Can't add BSS with SSID: {} and BSSID: {} to scan result list. MAX_BSS: {}",
+                    beacon_frame.ssid(),
+                    beacon_frame.header.bssid,
+                    MAX_BSS
+                );
+                return PostChannelScanAction::Stop(());
+            }
+            let Some(bss) = BSS::from_beacon_like(beacon_frame, received_frame.rssi()) else {
+                return PostChannelScanAction::Continue;
+            };
+            let _ = bss_list.insert(*beacon_frame.header.bssid, bss);
+            PostChannelScanAction::Continue
+        },
+        scan_config,
+    )
+    .await
+    .map(|_| ())
+    .map_err(StaError::LMacError)
 }

@@ -10,7 +10,7 @@ use embassy_time::{Duration, Ticker};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
-    rx_router::RxRouterQueue,
+    util::{operations::deauthenticate, rx_router::RxRouterQueue},
     LMacInterfaceControl, ReceivedFrame, RxQueueReceiver,
 };
 use ieee80211::{
@@ -25,7 +25,6 @@ use ieee80211::{
 use llc_rs::SnapLlcFrame;
 
 use crate::{
-    operations::deauth::send_deauth,
     rx_router::{StaRxRouterEndpoint, StaRxRouterInput, StaRxRouterOperation},
     ConnectionInfo, ConnectionState, ConnectionStateTracker, StaTxRx, MTU,
 };
@@ -98,17 +97,14 @@ impl ConnectionRunner<'_, '_> {
                 Either3::Third(_) => {
                     // Since we assume the network either can't or barely hear us, we use the
                     // lowest PHY rate.
-                    if send_deauth(
+                    deauthenticate(
                         self.sta_tx_rx.interface_control,
                         bssid,
                         own_address,
+                        true,
                         WiFiRate::PhyRate1ML,
                     )
-                    .await
-                    .is_err()
-                    {
-                        error!("The TX buffer was too small to transmit a deauth.");
-                    }
+                    .await;
                     self.set_disconnected();
                     debug!("Disconnected from BSS due to beacon timeout.");
                     return;
