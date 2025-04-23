@@ -1,7 +1,7 @@
 use core::{marker::PhantomData, mem};
 
 use embassy_futures::join::join;
-use embassy_time::{Duration, WithTimeout};
+use embassy_time::WithTimeout;
 use foa::{
     esp_wifi_hal::{RxFilterBank, TxParameters, WiFiRate},
     LMacInterfaceControl, ReceivedFrame,
@@ -23,16 +23,14 @@ use ieee80211::{
 };
 
 use crate::{
-    control::BSS,
-    operations::{DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
+    operations::{scan::BSS, DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
     rx_router::{StaRxRouterEndpoint, StaRxRouterOperation, StaRxRouterScopedOperation},
-    StaError, StaTxRx,
+    ConnectionConfig, StaError, StaTxRx,
 };
 
 pub struct ConnectionParameters {
     pub phy_rate: WiFiRate,
-    pub retries: usize,
-    pub timeout: Duration,
+    pub config: ConnectionConfig,
     pub own_address: MACAddress,
 }
 
@@ -59,7 +57,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         // Allocate a TX buffer and serialize the frame.
         let mut tx_buffer = self.sta_tx_rx.interface_control.alloc_tx_buf().await;
         let written = tx_buffer.pwrite(tx_frame, 0).unwrap();
-        for _ in 0..=self.connection_parameters.retries {
+        for _ in 0..=self.connection_parameters.config.handshake_retries {
             let res = self
                 .sta_tx_rx
                 .interface_control
@@ -79,7 +77,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             // frames.
             if let Ok(frame) = router_operation
                 .receive()
-                .with_timeout(self.connection_parameters.timeout)
+                .with_timeout(self.connection_parameters.config.handshake_timeout)
                 .await
             {
                 return Ok(frame);
