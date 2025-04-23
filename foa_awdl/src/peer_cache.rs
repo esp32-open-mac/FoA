@@ -57,12 +57,16 @@ pub(crate) trait AwdlPeerCache: for<'a> Index<&'a MACAddress, Output = AwdlPeer>
         })
     }
     /// Remove all peers, from which we haven't received a frame within the specified timeout.
-    fn purge_stale_peers(&mut self, mut purge_cb: impl FnMut(&MACAddress), timeout: Duration) {
+    fn purge_stale_peers(
+        &mut self,
+        mut purge_cb: impl FnMut(&MACAddress, &AwdlPeer),
+        timeout: Duration,
+    ) {
         self.retain(|address, peer| {
             let retain_peer = peer.last_frame.elapsed() < timeout;
             if !retain_peer {
                 debug!("Removing {} from peer cache due to inactivity.", address);
-                (purge_cb)(address);
+                (purge_cb)(address, peer);
             }
             retain_peer
         })

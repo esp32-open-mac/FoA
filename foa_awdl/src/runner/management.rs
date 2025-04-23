@@ -197,9 +197,13 @@ impl AwdlManagementRunner<'_, '_> {
                         .get();
                     self.common_resources.lock_peer_cache(|mut peer_cache| {
                         peer_cache.purge_stale_peers(
-                            |address| {
+                            |address, peer| {
                                 self.common_resources
-                                    .raise_user_event(AwdlEvent::PeerDiscovered(**address));
+                                    .raise_user_event(AwdlEvent::PeerWentStale {
+                                        address: **address,
+                                        airdrop_port: peer.airdrop_port,
+                                        airplay_port: peer.airplay_port,
+                                    });
                             },
                             timeout,
                         )
