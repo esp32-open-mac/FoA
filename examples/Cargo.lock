@@ -440,7 +440,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
- "const-oid",
  "crypto-common",
  "subtle",
 ]
@@ -452,19 +451,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95249b50c6c185bee49034bcb378a49dc2b5dff0be90ff6616d31d64febab05d"
 dependencies = [
  "litrs",
-]
-
-[[package]]
-name = "ecdsa"
-version = "0.16.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
-dependencies = [
- "der",
- "digest",
- "elliptic-curve",
- "rfc6979",
- "signature",
 ]
 
 [[package]]
@@ -730,12 +716,14 @@ dependencies = [
 
 [[package]]
 name = "embedded-tls"
-version = "0.17.1"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6efb76fdd004a4ef787640177237b83449e6c5847765ea50bf15900061fd601"
 dependencies = [
  "aes-gcm",
+ "atomic-polyfill",
  "defmt 0.3.100",
  "digest",
- "ecdsa",
  "embedded-io",
  "embedded-io-async",
  "generic-array 0.14.7",
@@ -744,10 +732,8 @@ dependencies = [
  "hkdf",
  "hmac",
  "p256",
- "portable-atomic",
  "rand_core 0.6.4",
  "sha2",
- "signature",
  "typenum",
 ]
 
@@ -1615,10 +1601,8 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
 dependencies = [
- "ecdsa",
  "elliptic-curve",
  "primeorder",
- "sha2",
 ]
 
 [[package]]
@@ -1774,6 +1758,8 @@ checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 [[package]]
 name = "reqwless"
 version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb1be74cb817fa6dbda417110f575d9b9ad5488817f1eb65f2f6468fe6d5d663"
 dependencies = [
  "base64",
  "buffered-io",
@@ -1788,16 +1774,6 @@ dependencies = [
  "nourl",
  "rand_chacha",
  "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rfc6979"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
-dependencies = [
- "hmac",
- "subtle",
 ]
 
 [[package]]
@@ -1956,16 +1932,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "signature"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
-dependencies = [
- "digest",
- "rand_core 0.6.4",
 ]
 
 [[package]]

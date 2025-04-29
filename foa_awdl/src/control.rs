@@ -92,6 +92,10 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     pub fn set_mac_address(&mut self, mac_address: [u8; 6]) {
         self.mac_address = MACAddress::new(mac_address);
     }
+    /// Get the MAC address of the interface.
+    pub fn mac_address(&self) -> [u8; 6] {
+        *self.mac_address
+    }
     /// Randomize the MAC address.
     ///
     /// This will also return the MAC address.
