@@ -15,10 +15,7 @@ use awdl_frame_parser::{
 };
 use defmt_or_log::debug;
 use embassy_time::{Duration, Instant};
-use ieee80211::{
-    common::TU,
-    mac_parser::{MACAddress, ZERO},
-};
+use ieee80211::common::TU;
 
 /// The state of overlapping slots between us and a peer.
 pub enum OverlapSlotState {
@@ -238,7 +235,8 @@ impl SynchronizationState {
         };
         self.slot_start_timestamp(slot, Self::TU_IN_EMBASSY_TIME * 16)
     }
-    pub fn generate_tlv(&self, master_address: MACAddress) -> SynchronizationParametersTLV {
+    /// Generate the [SynchronizationParametersTLV] from this synchronization state.
+    pub fn generate_tlv(&self, master_address: [u8; 6]) -> SynchronizationParametersTLV {
         let duration_since_epoch = self.elapsed_since_tsf_epoch();
         let aw_seq_number = Self::aw_seq_number(duration_since_epoch);
         SynchronizationParametersTLV {
@@ -255,7 +253,7 @@ impl SynchronizationState {
             max_multicast_ext_count: 3,
             max_unicast_ext_count: 3,
             max_af_ext_count: 3,
-            master_address,
+            master_address: master_address.into(),
             ap_beacon_alignment_delta: 0,
             presence_mode: 4,
             aw_seq_number,
@@ -284,18 +282,18 @@ pub struct ElectionState {
     pub self_counter: Option<u32>,
     pub master_metric: u32,
     pub master_counter: Option<u32>,
-    pub sync_peer: Option<MACAddress>,
-    pub root_peer: MACAddress,
+    pub sync_peer: Option<[u8; 6]>,
+    pub root_peer: [u8; 6],
     pub distance_to_master: u32,
 }
 impl ElectionState {
     /// Uninitialized election state.
     ///
     /// This is intended for const init.
-    pub(crate) const UNINIT: ElectionState = ElectionState::new(ZERO);
+    pub(crate) const UNINIT: ElectionState = ElectionState::new([0u8; 6]);
 
     /// Create a new election state with default parameters.
-    pub const fn new(address: MACAddress) -> Self {
+    pub const fn new(address: [u8; 6]) -> Self {
         let metric = 60;
         Self {
             self_metric: metric,
@@ -308,17 +306,17 @@ impl ElectionState {
         }
     }
     /// Sets the election state, as if the peer were it's own master.
-    pub fn set_master_to_self(&mut self, address: MACAddress) {
-        *self = Self::new(address);
+    pub fn set_master_to_self(&mut self, our_address: [u8; 6]) {
+        *self = Self::new(our_address);
     }
     /// Is the specified address the master.
-    pub fn is_master(&self, address: &MACAddress) -> bool {
+    pub fn is_master(&self, address: &[u8; 6]) -> bool {
         self.sync_peer.unwrap_or(self.root_peer) == *address
     }
     /// Adopt the election parameters as the master parameters.
     pub fn adopt_master(
         &mut self,
-        master_address: &MACAddress,
+        master_address: &[u8; 6],
         master_election_state: &ElectionState,
     ) {
         self.master_metric = master_election_state.master_metric;
@@ -336,8 +334,8 @@ impl ElectionState {
                 self_counter: Some(tlv.self_counter),
                 master_metric: tlv.master_metric,
                 master_counter: Some(tlv.master_counter),
-                sync_peer: Some(tlv.sync_address),
-                root_peer: tlv.master_address,
+                sync_peer: Some(*tlv.sync_address),
+                root_peer: *tlv.master_address,
                 distance_to_master: tlv.distance_to_master,
             })
             .or_else(|| {
@@ -349,7 +347,7 @@ impl ElectionState {
                         self_counter: None,
                         master_metric: tlv.master_metric,
                         master_counter: None,
-                        root_peer: tlv.master_address,
+                        root_peer: *tlv.master_address,
                         distance_to_master: tlv.distance_to_master as u32,
                         sync_peer: None,
                     })
@@ -374,7 +372,7 @@ impl ElectionState {
         ElectionParametersTLV {
             self_metric: self.self_metric,
             distance_to_master: self.distance_to_master as u8,
-            master_address: self.root_peer,
+            master_address: self.root_peer.into(),
             master_metric: self.master_metric,
             ..Default::default()
         }
@@ -386,8 +384,8 @@ impl ElectionState {
             self_counter: self.self_counter?,
             master_counter: self.master_counter?,
             distance_to_master: self.distance_to_master,
-            master_address: self.root_peer,
-            sync_address: self.sync_peer?,
+            master_address: self.root_peer.into(),
+            sync_address: self.sync_peer?.into(),
             ..Default::default()
         })
     }
@@ -421,7 +419,7 @@ impl AwdlPeer {
     /// The returned bool indicates, whether services were discovered.
     pub(crate) fn update(
         &mut self,
-        transmitter: MACAddress,
+        transmitter: &[u8; 6],
         awdl_action_body: &DefaultAWDLActionFrame<'_>,
         rx_timestamp: Instant,
     ) -> bool {

@@ -32,4 +32,5 @@ esp32s2 = ["foa/esp32s2"]
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 log = ["defmt-or-log/log"]
 
-
+ndp-inject = []
+default = ["ndp-inject"]

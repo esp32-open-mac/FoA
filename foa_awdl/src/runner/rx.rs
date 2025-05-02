@@ -1,5 +1,6 @@
 use awdl_frame_parser::{action_frame::DefaultAWDLActionFrame, data_frame::AWDLDataFrame};
 use defmt_or_log::{debug, trace};
+#[cfg(feature = "ndp-inject")]
 use embassy_futures::select::{select, Either};
 use embassy_net_driver_channel::RxRunner;
 use embassy_sync::channel::DynamicReceiver;
@@ -7,23 +8,16 @@ use embassy_time::{Duration, Instant, WithTimeout};
 use foa::ReceivedFrame;
 use ieee80211::{
     data_frame::{DataFrame, DataFrameReadPayload},
-    mac_parser::MACAddress,
     match_frames,
     mgmt_frame::body::action::RawVendorSpecificActionFrame,
     scroll::Pread,
 };
 use llc_rs::SnapLlcFrame;
-use smoltcp::{
-    phy::ChecksumCapabilities,
-    wire::{
-        EthernetAddress, EthernetFrame, EthernetProtocol, Icmpv6Packet, Icmpv6Repr, IpProtocol,
-        Ipv6Packet, NdiscNeighborFlags, NdiscRepr, RawHardwareAddress,
-    },
-};
+use smoltcp::wire::{EthernetAddress, EthernetFrame, EthernetProtocol};
 
 use crate::{
-    hw_address_to_ipv6, peer::AwdlPeer, peer_cache::AwdlPeerCache, state::CommonResources,
-    AwdlEvent, APPLE_OUI, AWDL_MTU,
+    peer::AwdlPeer, peer_cache::AwdlPeerCache, state::CommonResources, AwdlEvent, APPLE_OUI,
+    AWDL_MTU,
 };
 
 /// Handles reception of all MPDUs.
@@ -35,8 +29,8 @@ pub struct AwdlMpduRxRunner<'foa, 'vif> {
 impl AwdlMpduRxRunner<'_, '_> {
     fn process_action_frame(
         &self,
-        our_address: &MACAddress,
-        transmitter: MACAddress,
+        our_address: &[u8; 6],
+        transmitter: &[u8; 6],
         awdl_action_body: DefaultAWDLActionFrame<'_>,
         rx_timestamp: Instant,
     ) {
@@ -44,7 +38,7 @@ impl AwdlMpduRxRunner<'_, '_> {
             self.common_resources
                 .lock_peer_cache(|mut peer_cache| {
                     peer_cache.modify_or_add_peer(
-                        &transmitter,
+                        transmitter,
                         |peer| {
                             let service_discovered =
                                 peer.update(transmitter, &awdl_action_body, rx_timestamp);
@@ -59,9 +53,9 @@ impl AwdlMpduRxRunner<'_, '_> {
                             }
                             // If the peer is our master, we resynchronize to it, so timing error remains
                             // small.
-                            if self.common_resources.is_peer_master(&transmitter) {
+                            if self.common_resources.is_peer_master(transmitter) {
                                 self.common_resources
-                                    .adopt_peer_as_master(&transmitter, peer);
+                                    .adopt_peer_as_master(transmitter, peer);
                             }
                         },
                         || {
@@ -145,7 +139,7 @@ impl AwdlMpduRxRunner<'_, '_> {
         self.rx_runner.rx_done(written);
     }
     /// Process a received frame.
-    async fn process_frame(&mut self, our_address: &MACAddress, received: ReceivedFrame<'_>) {
+    async fn process_frame(&mut self, our_address: &[u8; 6], received: ReceivedFrame<'_>) {
         let _ = match_frames! {
             received.mpdu_buffer(),
             action_frame = RawVendorSpecificActionFrame => {
@@ -155,15 +149,25 @@ impl AwdlMpduRxRunner<'_, '_> {
                 let Ok(awdl_action_body) = action_frame.body.payload.pread::<DefaultAWDLActionFrame>(0) else {
                     return;
                 };
-                self.process_action_frame(our_address, action_frame.header.transmitter_address, awdl_action_body, received.corrected_timestamp());
+                self.process_action_frame(our_address, &action_frame.header.transmitter_address, awdl_action_body, received.corrected_timestamp());
             }
             data_frame = DataFrame => {
                 self.process_data_frame(&data_frame).await;
             }
         };
     }
-    fn inject_neighbor(&mut self, own_address: MACAddress, peer_address: MACAddress) {
-        if !self.common_resources.is_peer_cached(&peer_address) {
+    #[cfg(feature = "ndp-inject")]
+    fn inject_neighbor(&mut self, own_address: &[u8; 6], peer_address: &[u8; 6]) {
+        use crate::hw_address_to_ipv6;
+        use smoltcp::{
+            phy::ChecksumCapabilities,
+            wire::{
+                Icmpv6Packet, Icmpv6Repr, IpProtocol, Ipv6Packet, NdiscNeighborFlags, NdiscRepr,
+                RawHardwareAddress,
+            },
+        };
+
+        if !self.common_resources.is_peer_cached(peer_address) {
             debug!(
                 "Peer {} was requested for neighbor injection, but is not in peer cache.",
                 peer_address
@@ -178,11 +182,11 @@ impl AwdlMpduRxRunner<'_, '_> {
         };
 
         let mut ethernet_frame = EthernetFrame::new_unchecked(rx_buf);
-        ethernet_frame.set_dst_addr(EthernetAddress(own_address.0));
-        ethernet_frame.set_src_addr(EthernetAddress(peer_address.0));
+        ethernet_frame.set_dst_addr(EthernetAddress(*own_address));
+        ethernet_frame.set_src_addr(EthernetAddress(*peer_address));
         ethernet_frame.set_ethertype(EthernetProtocol::Ipv6);
-        let src_addr = hw_address_to_ipv6(&peer_address);
-        let dst_addr = hw_address_to_ipv6(&own_address);
+        let src_addr = hw_address_to_ipv6(peer_address);
+        let dst_addr = hw_address_to_ipv6(own_address);
         let neighbor_advert = Icmpv6Repr::Ndisc(NdiscRepr::NeighborAdvert {
             flags: NdiscNeighborFlags::SOLICITED,
             target_addr: src_addr,
@@ -214,8 +218,9 @@ impl AwdlMpduRxRunner<'_, '_> {
             peer_address
         );
     }
-    pub async fn run_session(&mut self, our_address: &MACAddress) -> ! {
+    pub async fn run_session(&mut self, our_address: &[u8; 6]) -> ! {
         loop {
+            #[cfg(feature = "ndp-inject")]
             match select(
                 self.rx_queue.receive(),
                 self.common_resources.ndp_inject_signal.wait(),
@@ -223,8 +228,11 @@ impl AwdlMpduRxRunner<'_, '_> {
             .await
             {
                 Either::First(received) => self.process_frame(our_address, received).await,
-                Either::Second(peer_address) => self.inject_neighbor(*our_address, peer_address),
+                Either::Second(peer_address) => self.inject_neighbor(our_address, &peer_address),
             }
+            #[cfg(not(feature = "ndp-inject"))]
+            self.process_frame(our_address, self.rx_queue.receive().await)
+                .await;
         }
     }
 }

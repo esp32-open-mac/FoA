@@ -43,15 +43,16 @@ impl AwdlManagementRunner<'_, '_> {
     /// Currently PSF and MIF are exactly the same.
     async fn serialize_and_send_action_frame(
         &self,
-        address: &MACAddress,
+        address: [u8; 6],
         af_type: AWDLActionFrameSubType,
     ) {
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let address = MACAddress(address);
         let awdl_frame = RawVendorSpecificActionFrame {
             header: ManagementFrameHeader {
                 receiver_address: BROADCAST,
-                transmitter_address: *address,
-                bssid: AWDL_BSSID,
+                transmitter_address: address,
+                bssid: AWDL_BSSID.into(),
                 ..Default::default()
             },
             body: RawVendorSpecificActionBody {
@@ -98,8 +99,8 @@ impl AwdlManagementRunner<'_, '_> {
                                 ..Default::default()
                             },
                             infra_bssid_channel: Some((ZERO, 0)),
-                            infra_address: Some(*address),
-                            awdl_address: Some(*address),
+                            infra_address: Some(address),
+                            awdl_address: Some(address),
                             country_code: Some(
                                 self.common_resources
                                     .dynamic_session_parameters
@@ -173,7 +174,7 @@ impl AwdlManagementRunner<'_, '_> {
             .lock_sync_state(|sync_state| sync_state.mif_transmition_time())
     }
     /// Run an AWDL session.
-    pub async fn run_session(&mut self, our_address: &MACAddress) -> ! {
+    pub async fn run_session(&mut self, our_address: &[u8; 6]) -> ! {
         // We purge stale peers and resynchronize every second.
         let mut stale_peer_ticker = Ticker::every(Duration::from_secs(1));
         let mut psf_ticker = Ticker::every(Duration::from_micros(110 * TU.as_micros() as u64));
@@ -200,7 +201,7 @@ impl AwdlManagementRunner<'_, '_> {
                             |address, peer| {
                                 self.common_resources
                                     .raise_user_event(AwdlEvent::PeerWentStale {
-                                        address: **address,
+                                        address: *address,
                                         airdrop_port: peer.airdrop_port,
                                         airplay_port: peer.airplay_port,
                                     });
@@ -212,11 +213,11 @@ impl AwdlManagementRunner<'_, '_> {
                     self.common_resources.elect_master(our_address);
                 }
                 Either4::Third(_) => {
-                    self.serialize_and_send_action_frame(our_address, AWDLActionFrameSubType::PSF)
+                    self.serialize_and_send_action_frame(*our_address, AWDLActionFrameSubType::PSF)
                         .await
                 }
                 Either4::Fourth(_) => {
-                    self.serialize_and_send_action_frame(our_address, AWDLActionFrameSubType::MIF)
+                    self.serialize_and_send_action_frame(*our_address, AWDLActionFrameSubType::MIF)
                         .await;
                 }
             }

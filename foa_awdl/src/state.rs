@@ -8,7 +8,6 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::Duration;
-use ieee80211::mac_parser::MACAddress;
 
 use crate::{
     event::AwdlEvent,
@@ -20,10 +19,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// State of the AWDL interface pushed to the runner.
 pub(crate) enum AwdlState {
-    Active {
-        our_address: MACAddress,
-        channel: u8,
-    },
+    Active { our_address: [u8; 6], channel: u8 },
     Inactive,
 }
 /// Parameters that may change over the course of a session.
@@ -49,8 +45,9 @@ pub(crate) struct CommonResources {
     // State signaling
     /// Indicates the current status of the interface to the runner.
     pub(crate) state_signal: Signal<NoopRawMutex, AwdlState>,
+    #[cfg(feature = "ndp-inject")]
     /// Indicates a peer pending for injection into the neighbor cache.
-    pub(crate) ndp_inject_signal: Signal<NoopRawMutex, MACAddress>,
+    pub(crate) ndp_inject_signal: Signal<NoopRawMutex, [u8; 6]>,
     /// User facing event queue.
     ///
     /// NOTE: This is also passed out to the user, but lives here so the runner can reset it at the
@@ -71,6 +68,7 @@ impl CommonResources {
     pub const fn new() -> Self {
         Self {
             state_signal: Signal::new(),
+            #[cfg(feature = "ndp-inject")]
             ndp_inject_signal: Signal::new(),
             event_queue: Channel::new(),
             peer_cache: NoopMutex::new(RefCell::new(AwdlPeerCacheImplementation::UNINIT)),
@@ -80,9 +78,10 @@ impl CommonResources {
         }
     }
     /// Initialize the parameters for a new session.
-    pub fn initialize_session_parameters(&self, channel: u8, address: MACAddress) {
+    pub fn initialize_session_parameters(&self, channel: u8, address: [u8; 6]) {
         // Reset the neighbor injection signal, synchronization state, election state and clear
         // the user event queue.
+        #[cfg(feature = "ndp-inject")]
         self.ndp_inject_signal.reset();
         self.event_queue.clear();
         self.lock_sync_state(|mut sync_state| *sync_state = SynchronizationState::new(channel));
@@ -109,11 +108,11 @@ impl CommonResources {
             .lock(|peer_cache| (f)(peer_cache.borrow_mut()))
     }
     /// Check if the specified peer is our master.
-    pub fn is_peer_master(&self, address: &MACAddress) -> bool {
+    pub fn is_peer_master(&self, address: &[u8; 6]) -> bool {
         self.lock_election_state(|election_state| election_state.is_master(address))
     }
     /// Adjust the election and synchronization state to adopt the specified peer as our master.
-    pub fn adopt_peer_as_master(&self, address: &MACAddress, peer: &AwdlPeer) {
+    pub fn adopt_peer_as_master(&self, address: &[u8; 6], peer: &AwdlPeer) {
         self.lock_sync_state(|mut sync_state| sync_state.adopt_master(&peer.synchronization_state));
         self.lock_election_state(|mut election_state| {
             election_state.adopt_master(address, &peer.election_state)
@@ -126,7 +125,7 @@ impl CommonResources {
         }
     }
     /// Choose a master for time synchronization.
-    pub fn elect_master(&self, our_address: &MACAddress) {
+    pub fn elect_master(&self, our_address: &[u8; 6]) {
         self.lock_election_state(|mut self_election_state| {
             if let Some((master_address, master_election_state, master_sync_state)) = self
                 .lock_peer_cache(|peer_cache| {
@@ -158,7 +157,7 @@ impl CommonResources {
         });
     }
     /// Get the nearest overlap slot with the specified peer.
-    pub fn get_common_slot_for_peer(&self, peer_address: &MACAddress) -> OverlapSlotState {
+    pub fn get_common_slot_for_peer(&self, peer_address: &[u8; 6]) -> OverlapSlotState {
         self.lock_sync_state(|our_sync_state| {
             self.lock_peer_cache(|peer_cache| {
                 peer_cache.get_common_slot_for_peer(peer_address, &our_sync_state)
@@ -172,7 +171,7 @@ impl CommonResources {
         });
     }
     /// Check if the specified peer is in cache.
-    pub fn is_peer_cached(&self, peer_address: &MACAddress) -> bool {
+    pub fn is_peer_cached(&self, peer_address: &[u8; 6]) -> bool {
         self.lock_peer_cache(|peer_cache| {
             <AwdlPeerCacheImplementation as AwdlPeerCache>::contains_key(&peer_cache, peer_address)
         })

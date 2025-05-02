@@ -18,6 +18,7 @@
 //! -- | -- | -- | --
 //! STA | [foa_sta](https://github.com/esp32-open-mac/FoA/tree/main/foa_sta) | A simple client implementation. | `Frostie314159`
 //! Nintendo DS Pictochat | [foa_dswifi](https://github.com/mjwells2002/foa_dswifi) | An implementation of the Nintendo DS Pictochat protocol. | `mjwells2002`
+//! AWDL | [foa_awdl](https://github.com/esp32-open-mac/FoA/tree/main/foa_awdl) | An implementation of the Apple Wireless Direct Link protocol | `Frostie314159`
 //!
 //!
 //! ### Station (STA)

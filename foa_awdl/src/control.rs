@@ -2,7 +2,6 @@ use core::net::Ipv6Addr;
 
 use embassy_time::Duration;
 use foa::{esp_wifi_hal::RxFilterBank, LMacInterfaceControl};
-use ieee80211::mac_parser::MACAddress;
 use rand_core::RngCore;
 
 use crate::{
@@ -19,18 +18,18 @@ pub struct AwdlControl<'foa, 'vif, Rng: RngCore> {
     pub(crate) common_resources: &'vif CommonResources,
     pub(crate) rng: Rng,
     pub(crate) channel: u8,
-    pub(crate) mac_address: MACAddress,
+    pub(crate) mac_address: [u8; 6],
 }
 impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     /// Set and enable all filters required for the interface.
     fn enable_filters(&self) {
         self.interface_control
-            .set_filter_parameters(RxFilterBank::BSSID, *AWDL_BSSID, None);
+            .set_filter_parameters(RxFilterBank::BSSID, AWDL_BSSID, None);
         self.interface_control
             .set_filter_status(RxFilterBank::BSSID, true);
         self.interface_control.set_filter_parameters(
             RxFilterBank::ReceiverAddress,
-            *self.mac_address,
+            self.mac_address,
             None,
         );
         self.interface_control
@@ -90,11 +89,11 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     ///
     /// This will only take effect after restarting the interface.
     pub fn set_mac_address(&mut self, mac_address: [u8; 6]) {
-        self.mac_address = MACAddress::new(mac_address);
+        self.mac_address = mac_address;
     }
     /// Get the MAC address of the interface.
     pub fn mac_address(&self) -> [u8; 6] {
-        *self.mac_address
+        self.mac_address
     }
     /// Randomize the MAC address.
     ///
@@ -111,7 +110,11 @@ impl<Rng: RngCore> AwdlControl<'_, '_, Rng> {
     pub fn own_ipv6_addr(&self) -> Ipv6Addr {
         hw_address_to_ipv6(&self.mac_address)
     }
-    pub fn inspect_peers(&self, f: impl FnMut((&MACAddress, &AwdlPeer))) {
+    /// Inspect the peers, that are currently in cache.
+    ///
+    /// The provided closure will be called for every cached peer, with the first parameter being
+    /// the peers address and the second a reference to the peer.
+    pub fn inspect_peers(&self, f: impl FnMut((&[u8; 6], &AwdlPeer))) {
         self.common_resources
             .lock_peer_cache(move |peer_cache| peer_cache.inspect_peers(f));
     }

@@ -75,7 +75,7 @@ impl<'foa, 'vif> AwdlRunner<'foa, 'vif> {
 
             // We configure embassy_net here.
             self.state_runner
-                .set_hardware_address(HardwareAddress::Ethernet(*our_address));
+                .set_hardware_address(HardwareAddress::Ethernet(our_address));
             self.state_runner.set_link_state(LinkState::Up);
 
             let _ = select4(
