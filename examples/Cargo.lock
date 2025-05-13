@@ -1393,6 +1393,7 @@ dependencies = [
  "esp-rtos",
  "foa",
  "foa_awdl",
+ "foa_mesh",
  "foa_sta",
  "heapless 0.9.2",
  "reqwless",
@@ -1462,6 +1463,25 @@ dependencies = [
  "ieee80211",
  "llc-rs",
  "smoltcp",
+]
+
+[[package]]
+name = "foa_mesh"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "defmt-or-log",
+ "embassy-futures",
+ "embassy-net-driver-channel",
+ "embassy-sync",
+ "embassy-time",
+ "esp-config",
+ "ethernet",
+ "foa",
+ "heapless 0.8.0",
+ "ieee80211",
+ "llc-rs",
+ "rand_core 0.6.4",
 ]
 
 [[package]]

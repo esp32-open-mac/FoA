@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Frostie314159 <frostie.neuenhausen@gmail.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
+rust-version = "1.65.0"
 
 [dependencies]
 esp-hal = "=1.0.0"
@@ -32,6 +33,7 @@ embassy-executor = { version = "0.9.1", features = ["defmt"] }
 foa = { version = "0.1.0", path = "../foa", features = ["defmt"] }
 foa_sta = { path = "../foa_sta", features = ["defmt"] }
 foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
+foa_mesh = { path = "../foa_mesh", features = ["defmt"] }
 
 static_cell = "2.1.0"
 heapless = "0.9.1"
