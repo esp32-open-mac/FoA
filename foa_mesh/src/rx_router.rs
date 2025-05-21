@@ -2,10 +2,8 @@ use crate::RX_QUEUE_DEPTH;
 use foa::util::rx_router::{
     HasScanOperation, RxRouter, RxRouterEndpoint, RxRouterInput, RxRouterOperation,
 };
-use ieee80211::{
-    GenericFrame,
-    common::{FrameType, ManagementFrameSubtype},
-};
+use ieee80211::GenericFrame;
+use ieee80211::common::{FrameType, ManagementFrameSubtype};
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
