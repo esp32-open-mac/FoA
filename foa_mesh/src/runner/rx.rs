@@ -1,12 +1,13 @@
 use embassy_net_driver_channel::RxRunner as NetRxRunner;
 use foa::RxQueueReceiver;
 
-use crate::{MTU, rx_router::MeshRxRouterInput};
+use crate::{MTU, rx_router::MeshRxRouterInput, state::CommonResources};
 
 pub struct MeshRxRunner<'foa, 'vif> {
     pub(crate) rx_router_input: MeshRxRouterInput<'foa, 'vif>,
     pub(crate) interface_rx_queue_receiver: &'vif RxQueueReceiver<'foa>,
     pub(crate) net_rx_runner: NetRxRunner<'vif, MTU>,
+    pub(crate) common_resources: &'vif CommonResources,
 }
 impl MeshRxRunner<'_, '_> {
     pub async fn run(&mut self) -> ! {
