@@ -8,6 +8,7 @@ use embassy_time::{Duration, Instant, WithTimeout};
 use foa::ReceivedFrame;
 use ieee80211::{
     data_frame::{DataFrame, DataFrameReadPayload},
+    mac_parser::MACAddress,
     match_frames,
     mgmt_frame::body::action::RawVendorSpecificActionFrame,
     scroll::Pread,
@@ -63,7 +64,7 @@ impl AwdlMpduRxRunner<'_, '_> {
                                 .inspect(|peer| {
                                     debug!(
                         "Adding peer {} to cache. Channel Sequence: {}, TSF Epoch: {}s ago.",
-                        transmitter,
+                        MACAddress(*transmitter),
                         peer.synchronization_state.channel_sequence,
                         peer.synchronization_state
                             .elapsed_since_tsf_epoch()
@@ -170,7 +171,7 @@ impl AwdlMpduRxRunner<'_, '_> {
         if !self.common_resources.is_peer_cached(peer_address) {
             debug!(
                 "Peer {} was requested for neighbor injection, but is not in peer cache.",
-                peer_address
+                MACAddress(*peer_address)
             );
             return;
         }
@@ -215,7 +216,7 @@ impl AwdlMpduRxRunner<'_, '_> {
 
         debug!(
             "Successfully injected peer {} into neighbor cache.",
-            peer_address
+            MACAddress(*peer_address)
         );
     }
     pub async fn run_session(&mut self, our_address: &[u8; 6]) -> ! {

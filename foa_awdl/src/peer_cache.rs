@@ -61,7 +61,10 @@ pub(crate) trait AwdlPeerCache: for<'a> Index<&'a [u8; 6], Output = AwdlPeer> {
         self.retain(|address, peer| {
             let retain_peer = peer.last_frame.elapsed() < timeout;
             if !retain_peer {
-                debug!("Removing {} from peer cache due to inactivity.", address);
+                debug!(
+                    "Removing {} from peer cache due to inactivity.",
+                    MACAddress(*address)
+                );
                 (purge_cb)(address, peer);
             }
             retain_peer

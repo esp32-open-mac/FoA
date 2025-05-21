@@ -15,7 +15,8 @@ use awdl_frame_parser::{
 };
 use defmt_or_log::debug;
 use embassy_time::{Duration, Instant};
-use ieee80211::common::TU;
+use foa::esp_wifi_hal::WiFiRate;
+use ieee80211::{common::TU, mac_parser::MACAddress};
 
 /// The state of overlapping slots between us and a peer.
 pub enum OverlapSlotState {
@@ -397,6 +398,7 @@ pub struct AwdlPeer {
     pub election_state: ElectionState,
     /// The timestamp when the last frame was received from this peer.
     pub last_frame: Instant,
+    pub data_rate: WiFiRate,
     pub airdrop_port: Option<u16>,
     pub airplay_port: Option<u16>,
 }
@@ -409,6 +411,7 @@ impl AwdlPeer {
         Some(Self {
             synchronization_state: SynchronizationState::from_af(awdl_action_body, rx_timestamp)?,
             election_state: ElectionState::from_af(awdl_action_body)?,
+            data_rate: WiFiRate::PhyRate12M,
             last_frame: Instant::now(),
             airdrop_port: None,
             airplay_port: None,
@@ -431,7 +434,7 @@ impl AwdlPeer {
             {
                 debug!(
                     "Peer {} changed it's channel sequence. {} -> {}.",
-                    transmitter,
+                    MACAddress(*transmitter),
                     self.synchronization_state.channel_sequence,
                     synchronization_state.channel_sequence
                 );

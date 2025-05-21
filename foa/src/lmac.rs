@@ -14,10 +14,6 @@
 //! an off channel operation, the [LMacInterfaceControl::begin_interface_off_channel_operation] API
 //! can be used. If the other interface currently holds the channel lock, it will receive an [OffChannelRequest] from [LMacInterfaceControl::wait_for_off_channel_request].
 //! Which can then be granted or rejected.
-//!
-//! As you may have noticed, there is now public type providing receive access to the medium. This
-//! is due to shared RX access being very hard to implement. Instead, frames addressed to an
-//! interface will be passed to [interface_input](crate::interface::InterfaceInput::interface_input), by the MAC task.
 use core::{
     array,
     cell::{Cell, RefCell},

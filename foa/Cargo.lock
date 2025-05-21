@@ -636,7 +636,7 @@ name = "foa"
 version = "0.1.0-alpha.0"
 dependencies = [
  "critical-section",
- "defmt 0.3.100",
+ "defmt 1.0.1",
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync",
