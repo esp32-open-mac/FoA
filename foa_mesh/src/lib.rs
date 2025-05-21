@@ -1,13 +1,16 @@
 #![no_std]
 
-use embassy_net_driver_channel::{self as ch, driver::HardwareAddress, Device as NetDevice};
-use esp_config::esp_config_int;
-use foa::VirtualInterface;
-use rx_router::MeshRxRouter;
-
 mod control;
 mod runner;
 mod rx_router;
+pub mod state;
+
+use embassy_net_driver_channel::{Device as NetDevice, driver::HardwareAddress};
+use esp_config::esp_config_int;
+use foa::VirtualInterface;
+use ieee80211::mac_parser::MACAddress;
+use rand_core::RngCore;
+use state::{CommonResources, MeshResources};
 
 pub use {control::MeshControl, runner::MeshRunner};
 
@@ -18,16 +21,21 @@ pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_MESH_CONFIG
 pub const MTU: usize = 1500;
 pub type MeshNetDevice<'a> = NetDevice<'a, MTU>;
 
-pub struct MeshResources<'foa> {
-    rx_router: MeshRxRouter<'foa>,
-    net_state: ch::State<MTU, NET_RX_BUFFERS, NET_TX_BUFFERS>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Errors that can occur with the Mesh interface.
+pub enum MeshError {
+    FailedToAcquireChannelLock,
 }
-pub fn new_mesh_interface<'foa, 'vif>(
+
+pub fn new_mesh_interface<'foa, 'vif, Rng: RngCore + Copy>(
     resources: &'vif mut MeshResources<'foa>,
     virtual_interface: &'vif mut VirtualInterface<'foa>,
+    channel: u8,
+    mesh_id: heapless::String<32>,
+    rng: Rng,
 ) -> (
     MeshControl<'foa, 'vif>,
-    MeshRunner<'foa, 'vif>,
+    MeshRunner<'foa, 'vif, Rng>,
     MeshNetDevice<'vif>,
 ) {
     virtual_interface.reset();
@@ -42,6 +50,10 @@ pub fn new_mesh_interface<'foa, 'vif>(
         MeshControl {
             interface_control,
             rx_router_endpoint: foreground_endpoint,
+            common_resources: &resources.common_resources,
+            channel,
+            mac_address: MACAddress::new(interface_control.get_factory_mac_for_interface()),
+            mesh_id,
         },
         MeshRunner::new(
             net_runner,
@@ -49,6 +61,8 @@ pub fn new_mesh_interface<'foa, 'vif>(
             rx_router_input,
             interface_rx_queue_receiver,
             interface_control,
+            &resources.common_resources,
+            rng.clone(),
         ),
         net_device,
     )
