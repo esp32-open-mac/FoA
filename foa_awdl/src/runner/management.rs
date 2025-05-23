@@ -159,13 +159,12 @@ impl AwdlManagementRunner<'_, '_> {
             )
             .await;
         trace!(
-            "Transmitted {} to {}.",
+            "Transmitted {}.",
             if af_type == AWDLActionFrameSubType::MIF {
                 "MIF"
             } else {
                 "PSF"
             },
-            address
         );
     }
     /// Get the timestamp for the next MIF transmission.

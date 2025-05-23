@@ -8,11 +8,11 @@ embassy-sync = "0.6.0"
 embassy-futures = "0.1.1"
 
 esp-hal = "1.0.0-beta.0"
-esp-wifi-hal = "0.1.0-alpha.3"
+esp-wifi-hal = "0.1.0-alpha.4"
 static_cell = "2.1.0"
 critical-section = "1.2.0"
 portable-atomic = "1.10.0"
-esp-config= "0.3.0"
+esp-config = "0.3.0"
 defmt-or-log = { version = "0.2.1", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 embassy-time = "0.4.0"
@@ -30,4 +30,3 @@ defmt = ["dep:defmt", "defmt-or-log/defmt", "esp-wifi-hal/defmt"]
 
 esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-wifi-hal/esp32s2"]
-
