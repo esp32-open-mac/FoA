@@ -392,21 +392,28 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         mesh_peering_open_frame: &MeshPeeringOpenFrame<'_>,
         our_address: &MACAddress,
     ) -> Option<()> {
+        let addr = mesh_peering_open_frame.header.transmitter_address;
+        let peer_link_id = mesh_peering_open_frame
+            .body
+            .elements
+            .get_first_element::<MeshPeeringManagement>()?
+            .parse_as_open()?
+            .local_link_id;
         if Self::does_mesh_sta_configuration_match(mesh_peering_open_frame.elements) {
             // check that we still have space left for an extra association
-            let addr = mesh_peering_open_frame.header.transmitter_address;
-            let peer_link_id = mesh_peering_open_frame
-                .body
-                .elements
-                .get_first_element::<MeshPeeringManagement>()?
-                .parse_as_open()?
-                .local_link_id;
             let peer = {
                 self.common_resources
                     .lock_peer_list(|mut peer_list| peer_list.get_or_create(&addr))
             };
             let Ok(peer) = peer else {
-                // TODO send close
+                self.send_mesh_peering_close(
+                    our_address,
+                    &addr,
+                    peer_link_id,
+                    None,
+                    IEEE80211Reason::Unspecified, // TODO correct error code
+                )
+                .await;
                 return None;
             };
 
@@ -537,14 +544,126 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         &addr,
                         local_link_id,
                         peer_link_id,
-                        // TODO: find in the standard which reason to use
-                        IEEE80211Reason::Unspecified,
+                        IEEE80211Reason::Unspecified, // TODO correct error code
                     )
                     .await;
                 }
             };
         } else {
-            self.send_mesh_peering_close(our_address, &addr, local_link_id, peer_link_id, reason)
+            self.send_mesh_peering_close(
+                our_address,
+                &addr,
+                peer_link_id,
+                None,
+                IEEE80211Reason::Unspecified, // TODO correct error code
+            )
+            .await;
+        }
+
+        None
+    }
+
+    pub async fn process_mesh_peering_confirm(
+        &mut self,
+        mesh_peering_confirm_frame: &MeshPeeringConfirmFrame<'_>,
+        our_address: &MACAddress,
+    ) -> Option<()> {
+        let addr = mesh_peering_confirm_frame.header.transmitter_address;
+        let mpm = mesh_peering_confirm_frame
+            .body
+            .elements
+            .get_first_element::<MeshPeeringManagement>()?
+            .parse_as_confirm()?;
+        let remote_aid = mesh_peering_confirm_frame.association_id;
+        if !Self::does_mesh_sta_configuration_match(mesh_peering_confirm_frame.elements) {
+            self.send_mesh_peering_close(
+                our_address,
+                &addr,
+                mpm.peer_link_id.unwrap_or(0),
+                Some(mpm.local_link_id),
+                IEEE80211Reason::Unspecified, // TODO should be MESH-INCONSISTENT-PARAMETERS.
+            )
+            .await;
+            return None;
+        }
+        // mesh configuration matches
+        let peer = {
+            self.common_resources
+                .lock_peer_list(|mut peer_list| peer_list.get_or_create(&addr))
+        };
+        let Ok(peer) = peer else {
+            // Normally, we should be in a state where we know about the peer, so reject
+            self.send_mesh_peering_close(
+                our_address,
+                &addr,
+                mpm.peer_link_id.unwrap_or(0),
+                Some(mpm.local_link_id),
+                IEEE80211Reason::Unspecified, // TODO correct error code
+            )
+            .await;
+            return None;
+        };
+
+        match peer.mpm_state {
+            MPMFSMState::Idle | MPMFSMState::Holding { .. } => {
+                self.send_mesh_peering_close(
+                    our_address,
+                    &addr,
+                    mpm.peer_link_id.unwrap_or(0),
+                    Some(mpm.local_link_id),
+                    IEEE80211Reason::Unspecified, // TODO correct error code
+                )
+                .await;
+            }
+            MPMFSMState::Estab { .. } => {
+                // Ignore
+            }
+            MPMFSMState::Setup {
+                mac_addr,
+                local_link_id: local_link_id_cached,
+                substate,
+                local_aid,
+                ..
+            } => match substate {
+                MPMFSMSubState::OpnSnt => {
+                    self.common_resources.lock_peer_list(|mut peer_list| {
+                        let _ = peer_list.modify_or_add_peer(
+                            &addr,
+                            |peer| {
+                                peer.mpm_state = MPMFSMState::Setup {
+                                    mac_addr: mac_addr,
+                                    local_link_id: mpm.peer_link_id.unwrap_or(local_link_id_cached),
+                                    peer_link_id: mpm.local_link_id,
+                                    substate: MPMFSMSubState::CnfRcvd,
+                                    local_aid: local_aid,
+                                    remote_aid: Some(remote_aid),
+                                };
+                            },
+                            || None,
+                        );
+                    });
+                }
+                MPMFSMSubState::OpnRcvd => {
+                    self.common_resources.lock_peer_list(|mut peer_list| {
+                        let _ = peer_list.modify_or_add_peer(
+                            &addr,
+                            |peer| {
+                                peer.mpm_state = MPMFSMState::Estab {
+                                    mac_addr: mac_addr,
+                                    local_link_id: mpm.peer_link_id.unwrap_or(local_link_id_cached),
+                                    peer_link_id: mpm.local_link_id,
+                                    local_aid: local_aid,
+                                    remote_aid: remote_aid,
+                                };
+                            },
+                            || None,
+                        );
+                    });
+                }
+                _ => {
+                    // Ignored
+                }
+            },
         }
 
         None
@@ -565,17 +684,16 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             {
                 Either3::First(_off_channel_request) => {}
                 Either3::Second(buffer) => {
-                    // qrp
                     let _ = match_frames! {
                         buffer.mpdu_buffer(),
-                        beacon_frame = BeaconFrame => {
-                            debug!("beacon frame");
-                            if beacon_frame.body.ssid() == Some("") {
-                                debug!("empty beacon frame");
-                            }
+                        _beacon_frame = BeaconFrame => {
+                            // TODO process beacon frames
                         }
                         mesh_peering_open_frame = MeshPeeringOpenFrame => {
                             self.process_mesh_peering_open(&mesh_peering_open_frame, our_address).await;
+                        }
+                        mesh_peering_confirm_frame = MeshPeeringConfirmFrame => {
+                            self.process_mesh_peering_confirm(&mesh_peering_confirm_frame, our_address).await;
                         }
                     };
                 }
