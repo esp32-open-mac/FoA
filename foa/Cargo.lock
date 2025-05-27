@@ -574,9 +574,9 @@ dependencies = [
 
 [[package]]
 name = "esp-wifi-hal"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d293a7e115e959417047180378edf6d25442e1ecde78548486df2c394213e1f2"
+checksum = "8aed1a3359a0947450d5c60babbfa969019d1781be6b0ee7fd21bcb27f89febd"
 dependencies = [
  "bitfield-struct 0.11.0",
  "cfg-if",
