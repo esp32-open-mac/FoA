@@ -22,6 +22,12 @@ fn main() {
                 Value::Integer(4),
                 Some(Validator::PositiveInteger),
             ),
+            (
+                "MAX_NUM_PEERS",
+                "Maximum amount of peers connected at the same time.",
+                Value::Integer(5),
+                Some(Validator::PositiveInteger),
+            ),
         ],
         true,
     );

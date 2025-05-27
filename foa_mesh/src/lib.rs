@@ -1,6 +1,8 @@
 #![no_std]
+#![feature(cell_update)]
 
 mod control;
+pub mod peer_state;
 mod runner;
 mod rx_router;
 pub mod state;
@@ -17,6 +19,7 @@ pub use {control::MeshControl, runner::MeshRunner};
 pub(crate) const RX_QUEUE_DEPTH: usize = esp_config_int!(usize, "FOA_MESH_CONFIG_RX_QUEUE_DEPTH");
 pub(crate) const NET_TX_BUFFERS: usize = esp_config_int!(usize, "FOA_MESH_CONFIG_NET_TX_BUFFERS");
 pub(crate) const NET_RX_BUFFERS: usize = esp_config_int!(usize, "FOA_MESH_CONFIG_NET_RX_BUFFERS");
+pub(crate) const MAX_NUM_PEERS: usize = esp_config_int!(usize, "FOA_MESH_CONFIG_MAX_NUM_PEERS");
 
 pub const MTU: usize = 1500;
 pub type MeshNetDevice<'a> = NetDevice<'a, MTU>;
