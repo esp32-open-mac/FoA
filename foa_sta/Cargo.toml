@@ -7,7 +7,15 @@ edition = "2021"
 defmt = { version = "0.3.10", optional = true }
 defmt-or-log = { version = "0.2.1", default-features = false }
 embassy-futures = "0.1.1"
-embassy-net = { version = "0.6.0", features = ["proto-ipv4", "dhcpv4", "medium-ethernet", "proto-ipv6", "tcp", "udp", "dns"] }
+embassy-net = { version = "0.6.0", features = [
+  "proto-ipv4",
+  "dhcpv4",
+  "medium-ethernet",
+  "proto-ipv6",
+  "tcp",
+  "udp",
+  "dns",
+] }
 embassy-net-driver-channel = "0.3.0"
 embassy-sync = "0.6.1"
 embassy-time = "0.4.0"
@@ -15,7 +23,7 @@ esp-config = "0.3.1"
 ethernet = { version = "0.1.5", default-features = false }
 foa = { path = "../foa/" }
 heapless = "0.8.0"
-ieee80211 = { version = "0.5.4", default-features = false }
+ieee80211 = { version = "0.5.6", default-features = false }
 llc-rs = "0.1.0"
 rand_core = "0.6.0"
 
@@ -28,4 +36,3 @@ esp32s2 = ["foa/esp32s2"]
 
 log = ["defmt-or-log/log"]
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
-

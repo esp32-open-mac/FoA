@@ -779,7 +779,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "esp-alloc"
 version = "0.7.0"
-source = "git+https://github.com/esp-rs/esp-hal#ff3c5f4bb3dfab9be15e17866b03ddb0661904d1"
+source = "git+https://github.com/esp-rs/esp-hal#f203d25cb7d487fbd4e21ab57b1b96d5cf6ac401"
 dependencies = [
  "allocator-api2",
  "cfg-if",
@@ -1340,9 +1340,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "ieee80211"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06530bda0af5484a90b9a322dc7bb467a8b1f0d08d3bc50c510ba876fc516b48"
+checksum = "4f23f43313ce770fdd7c96e5ba2b1fccfffde5f2d5782b29c975295b82923a7e"
 dependencies = [
  "bitfield-struct 0.8.0",
  "const_soft_float",

@@ -756,9 +756,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "ieee80211"
-version = "0.5.5"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06530bda0af5484a90b9a322dc7bb467a8b1f0d08d3bc50c510ba876fc516b48"
+checksum = "4f23f43313ce770fdd7c96e5ba2b1fccfffde5f2d5782b29c975295b82923a7e"
 dependencies = [
  "bitfield-struct 0.8.0",
  "const_soft_float",

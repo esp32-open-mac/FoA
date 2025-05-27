@@ -7,7 +7,7 @@ edition = "2021"
 embassy-futures = "0.1.1"
 embassy-sync = "0.6.2"
 embassy-time = "0.4.0"
-ieee80211 = "0.5.4"
+ieee80211 = "0.5.6"
 foa = { path = "../foa/" }
 heapless = "0.8.0"
 rand_core = "0.6.0"
@@ -19,7 +19,11 @@ embassy-net-driver-channel = "0.3.0"
 llc-rs = "0.1.0"
 ethernet = { version = "0.1.5", default-features = false }
 ether-type = "0.1.3"
-smoltcp = { version = "0.12.0", default-features = false, features = ["medium-ethernet", "proto-ipv6", "socket-raw"] }
+smoltcp = { version = "0.12.0", default-features = false, features = [
+  "medium-ethernet",
+  "proto-ipv6",
+  "socket-raw",
+] }
 
 [build-dependencies]
 esp-config = { version = "0.3.1", features = ["build"] }
