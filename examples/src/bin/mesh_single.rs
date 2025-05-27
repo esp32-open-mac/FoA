@@ -11,7 +11,6 @@ use foa::{FoAResources, FoARunner, VirtualInterface};
 use foa_mesh::state::MeshResources;
 use foa_mesh::MeshRunner;
 use heapless::String;
-use rand_core::RngCore;
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{

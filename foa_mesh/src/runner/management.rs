@@ -10,17 +10,30 @@ use foa::{
 };
 use rand_core::RngCore;
 
-use crate::{rx_router::MeshRxRouterEndpoint, state::CommonResources, state::MPMFSMState};
+use crate::{
+    peer_state::MeshPeerList,
+    rx_router::MeshRxRouterEndpoint,
+    state::{CommonResources, MPMFSMState, MPMFSMSubState},
+};
 
 use embassy_time::{Duration, Ticker};
 use ieee80211::{
-    common::{AssociationID, CapabilitiesInformation, TU},
+    common::{AssociationID, CapabilitiesInformation, IEEE80211Reason, TU},
     element_chain,
     elements::{
         self, DSSSParameterSetElement, MeshIDElement, ReadElements,
-        mesh::{MeshConfigurationElement, MeshPeeringManagement, MeshPeeringProtocolIdentifier},
+        mesh::{
+            MeshCapability, MeshConfigurationActivePathSelectionMetricIdentifier,
+            MeshConfigurationActivePathSelectionProtocolIdentifier,
+            MeshConfigurationAuthenticationProtocolIdentifier,
+            MeshConfigurationCongestionControlModeIdentifier, MeshConfigurationElement,
+            MeshConfigurationSynchronizationMethodIdentifier, MeshFormationInfo,
+            MeshPeeringManagement, MeshPeeringProtocolIdentifier,
+        },
+        rates::{EncodedRate, ExtendedSupportedRatesElement, SupportedRatesElement},
         tim::{TIMBitmap, TIMElement},
     },
+    extended_supported_rates,
     mac_parser::{BROADCAST, MACAddress},
     match_frames, mesh_id,
     mgmt_frame::{
@@ -28,31 +41,18 @@ use ieee80211::{
         body::{
             BeaconBody,
             action::{
-                MeshPeeringConfirmBody, MeshPeeringConfirmFrame, MeshPeeringOpenBody,
-                MeshPeeringOpenFrame,
+                MeshPeeringCloseBody, MeshPeeringCloseFrame, MeshPeeringConfirmBody,
+                MeshPeeringConfirmFrame, MeshPeeringOpenBody, MeshPeeringOpenFrame,
             },
         },
     },
     scroll::Pwrite,
-    ssid,
+    ssid, supported_rates,
 };
-
-pub struct MeshManagementRunner<'foa, 'vif, Rng: RngCore + Copy> {
-    pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
-    pub(crate) rx_router_endpoint: MeshRxRouterEndpoint<'foa, 'vif>,
-    pub(crate) net_state_runner: NetStateRunner<'vif>,
-    pub(crate) common_resources: &'vif CommonResources,
-    pub(crate) rng: Rng,
-}
 
 const BEACON_INTERVAL_TU: u64 = 100;
 
 // TODO deduplicate this from foa_sta
-use ieee80211::{
-    elements::rates::{EncodedRate, ExtendedSupportedRatesElement, SupportedRatesElement},
-    extended_supported_rates, supported_rates,
-};
-
 const DEFAULT_SUPPORTED_RATES: SupportedRatesElement<[EncodedRate; 8]> = supported_rates![
                         1 B,
                         2,
@@ -70,21 +70,34 @@ const DEFAULT_XRATES: ExtendedSupportedRatesElement<[EncodedRate; 4]> =
 // TODO make this settable from the consumer of this library
 const MESH_ID: &str = "meshtest";
 
+pub struct MeshManagementRunner<'foa, 'vif, Rng: RngCore + Copy> {
+    pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
+    pub(crate) rx_router_endpoint: MeshRxRouterEndpoint<'foa, 'vif>,
+    pub(crate) net_state_runner: NetStateRunner<'vif>,
+    pub(crate) common_resources: &'vif CommonResources,
+    pub(crate) rng: Rng,
+}
+
 impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     fn generate_own_mesh_configuration_element() -> MeshConfigurationElement {
         MeshConfigurationElement {
-            active_path_selection_protocol_identifier: ieee80211::elements::mesh::MeshConfigurationActivePathSelectionProtocolIdentifier::HWMP,
-            active_path_selection_metric_identifier: ieee80211::elements::mesh::MeshConfigurationActivePathSelectionMetricIdentifier::AirtimeLinkMetric,
-            congestion_control_mode_identifier: ieee80211::elements::mesh::MeshConfigurationCongestionControlModeIdentifier::NotActivated,
-            syncronization_method_identifier: ieee80211::elements::mesh::MeshConfigurationSynchronizationMethodIdentifier::NeighborOffsetSynchronization,
-            authentication_protocol_identifier: ieee80211::elements::mesh::MeshConfigurationAuthenticationProtocolIdentifier::NoAuthentication,
-            mesh_formation_info: ieee80211::elements::mesh::MeshFormationInfo::new()
+            active_path_selection_protocol_identifier:
+                MeshConfigurationActivePathSelectionProtocolIdentifier::HWMP,
+            active_path_selection_metric_identifier:
+                MeshConfigurationActivePathSelectionMetricIdentifier::AirtimeLinkMetric,
+            congestion_control_mode_identifier:
+                MeshConfigurationCongestionControlModeIdentifier::NotActivated,
+            syncronization_method_identifier:
+                MeshConfigurationSynchronizationMethodIdentifier::NeighborOffsetSynchronization,
+            authentication_protocol_identifier:
+                MeshConfigurationAuthenticationProtocolIdentifier::NoAuthentication,
+            mesh_formation_info: MeshFormationInfo::new()
                 .with_connected_to_mesh_gate(false) // TODO fill this in once we have it
                 .with_num_peerings(0) // TODO fill this in
                 .with_connected_to_as(false), // 'Connected to authentication system' is always false in open / SAE mesh
-            mesh_capability: ieee80211::elements::mesh::MeshCapability::new()
+            mesh_capability: MeshCapability::new()
                 .with_accept_additional_mesh_peerings(true) // TODO fill this in
-                .with_forwarding(true)
+                .with_forwarding(true),
         }
     }
 
@@ -290,8 +303,88 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .await;
     }
 
+    pub async fn send_mesh_peering_close(
+        &mut self,
+        our_address: &MACAddress,
+        dst_address: &MACAddress,
+        local_link_id: u16,
+        peer_link_id: Option<u16>,
+        reason: IEEE80211Reason,
+    ) {
+        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mesh_peering_close_frame = MeshPeeringCloseFrame {
+            header: ManagementFrameHeader {
+                receiver_address: *dst_address,
+                transmitter_address: *our_address,
+                bssid: *our_address,
+                ..Default::default()
+            },
+            body: MeshPeeringCloseBody {
+                elements: element_chain! {
+                    mesh_id!(MESH_ID),
+                    MeshPeeringManagement::new_close(
+                        MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
+                        local_link_id, peer_link_id,
+                        reason,
+                        None)
+                },
+                _phantom: PhantomData,
+            },
+        };
+
+        let written = tx_buffer.pwrite(mesh_peering_close_frame, 0).unwrap();
+        let _ = self
+            .interface_control
+            .transmit(
+                &mut tx_buffer[..written],
+                &TxParameters {
+                    rate: WiFiRate::PhyRate12M,
+                    override_seq_num: true,
+                    tx_error_behaviour: TxErrorBehaviour::Drop,
+                    ..Default::default()
+                },
+                false,
+            )
+            .await;
+    }
+
     pub fn generate_new_link_id(&self) -> u16 {
-        u16::try_from(self.rng.clone().next_u32() & 0xFFFF).unwrap()
+        loop {
+            let candidate = u16::try_from(self.rng.clone().next_u32() & 0xFFFF).unwrap();
+            // Check if there is a link in our peer list that already has that ID
+            if !self
+                .common_resources
+                .peer_list
+                .borrow()
+                .borrow()
+                .iter()
+                .map(|peer| match peer.1.mpm_state {
+                    MPMFSMState::Idle => false,
+                    MPMFSMState::Setup {
+                        local_link_id,
+                        peer_link_id,
+                        ..
+                    } => local_link_id == candidate || peer_link_id == candidate,
+                    MPMFSMState::Estab {
+                        local_link_id,
+                        peer_link_id,
+                        ..
+                    } => local_link_id == candidate || peer_link_id == candidate,
+                    MPMFSMState::Holding {
+                        local_link_id,
+                        peer_link_id,
+                        ..
+                    } => {
+                        local_link_id == candidate
+                            || peer_link_id.map(|id| id == candidate).unwrap_or(false)
+                    }
+                })
+                .fold(false, |acc, mk| acc || mk)
+            {
+                // This generated ID was not yet in use
+                return candidate;
+            }
+        }
     }
 
     pub async fn process_mesh_peering_open(
@@ -308,37 +401,150 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 .get_first_element::<MeshPeeringManagement>()?
                 .parse_as_open()?
                 .local_link_id;
-            if let Some(cell) = self
-                .common_resources
-                .dynamic_session_parameters
-                .find_relevant_peer(addr)
-            {
-                let old = cell.get();
-                match old {
-                    MPMFSMState::Idle => {
-                        let local_link_id = self.generate_new_link_id();
-                        cell.set(MPMFSMState::Active {
-                            mac_addr: addr,
-                            local_link_id: local_link_id,
-                            peer_link_id: peer_link_id,
-                            substate: crate::state::MPMFSMSubState::OpnRcvd,
+            let peer = {
+                self.common_resources
+                    .lock_peer_list(|mut peer_list| peer_list.get_or_create(&addr))
+            };
+            let Ok(peer) = peer else {
+                // TODO send close
+                return None;
+            };
+
+            match peer.mpm_state {
+                MPMFSMState::Idle => {
+                    let local_link_id = self.generate_new_link_id();
+                    let local_aid = self.common_resources.new_association_id();
+                    self.common_resources.lock_peer_list(|mut peer_list| {
+                        let _ = peer_list.modify_or_add_peer(
+                            &addr,
+                            |peer| {
+                                peer.mpm_state = MPMFSMState::Setup {
+                                    mac_addr: addr,
+                                    local_link_id: local_link_id,
+                                    peer_link_id: peer_link_id,
+                                    substate: MPMFSMSubState::OpnRcvd,
+                                    local_aid: local_aid,
+                                    remote_aid: None,
+                                }
+                            },
+                            || None,
+                        );
+                    });
+
+                    self.send_mesh_peering_confirm(
+                        our_address,
+                        &addr,
+                        local_aid,
+                        local_link_id,
+                        peer_link_id,
+                    )
+                    .await;
+                    self.send_mesh_peering_open(our_address, &addr, local_link_id)
+                        .await;
+                }
+                MPMFSMState::Setup {
+                    mac_addr,
+                    local_link_id,
+                    peer_link_id,
+                    substate,
+                    local_aid,
+                    remote_aid,
+                } => match substate {
+                    MPMFSMSubState::OpnSnt => {
+                        self.common_resources.lock_peer_list(|mut peer_list| {
+                            let _ = peer_list.modify_or_add_peer(
+                                &addr,
+                                |peer| {
+                                    peer.mpm_state = MPMFSMState::Setup {
+                                        mac_addr,
+                                        local_link_id,
+                                        peer_link_id,
+                                        substate: MPMFSMSubState::OpnRcvd,
+                                        local_aid,
+                                        remote_aid,
+                                    }
+                                },
+                                || None,
+                            );
                         });
                         self.send_mesh_peering_confirm(
                             our_address,
                             &addr,
-                            AssociationID::new_checked(1).unwrap(), // TODO increment
+                            local_aid,
+                            local_link_id,
+                            peer_link_id,
+                        )
+                        .await
+                    }
+                    MPMFSMSubState::CnfRcvd => {
+                        self.common_resources.lock_peer_list(|mut peer_list| {
+                            let _ = peer_list.modify_or_add_peer(
+                                &addr,
+                                |peer| {
+                                    peer.mpm_state = MPMFSMState::Estab {
+                                        mac_addr,
+                                        local_link_id,
+                                        peer_link_id,
+                                        local_aid,
+                                        remote_aid: remote_aid.unwrap(),
+                                    }
+                                },
+                                || None,
+                            );
+                        });
+                        self.send_mesh_peering_confirm(
+                            our_address,
+                            &addr,
+                            local_aid,
                             local_link_id,
                             peer_link_id,
                         )
                         .await;
-                        self.send_mesh_peering_open(our_address, &addr, local_link_id)
-                            .await;
                     }
-                    _ => {}
-                };
-            }
+                    MPMFSMSubState::OpnRcvd => {
+                        self.send_mesh_peering_confirm(
+                            our_address,
+                            &addr,
+                            local_aid,
+                            local_link_id,
+                            peer_link_id,
+                        )
+                        .await;
+                    }
+                },
+                MPMFSMState::Estab {
+                    local_link_id,
+                    peer_link_id,
+                    local_aid,
+                    ..
+                } => {
+                    self.send_mesh_peering_confirm(
+                        our_address,
+                        &addr,
+                        local_aid,
+                        local_link_id,
+                        peer_link_id,
+                    )
+                    .await;
+                }
+                MPMFSMState::Holding {
+                    local_link_id,
+                    peer_link_id,
+                    ..
+                } => {
+                    self.send_mesh_peering_close(
+                        our_address,
+                        &addr,
+                        local_link_id,
+                        peer_link_id,
+                        // TODO: find in the standard which reason to use
+                        IEEE80211Reason::Unspecified,
+                    )
+                    .await;
+                }
+            };
         } else {
-            // TODO configuration does not match, send rejection
+            self.send_mesh_peering_close(our_address, &addr, local_link_id, peer_link_id, reason)
         }
 
         None
