@@ -33,7 +33,7 @@ use embassy_sync::{
 };
 use esp_config::esp_config_int;
 use esp_hal::peripherals::{ADC2, RADIO_CLK, WIFI};
-use esp_wifi_hal::{DMAResources, RxFilterBank, ScanningMode, WiFi};
+use esp_wifi_hal::{WiFiResources, RxFilterBank, ScanningMode, WiFi};
 use lmac::SharedLMacState;
 
 #[cfg(not(feature = "arc_buffers"))]
@@ -77,7 +77,7 @@ pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
 
 /// The resources required by the WiFi stack.
 pub struct FoAResources {
-    dma_resources: DMAResources<RX_BUFFER_COUNT>,
+    wifi_resources: WiFiResources<RX_BUFFER_COUNT>,
     #[cfg(feature = "arc_buffers")]
     arc_pool: RxArcPool,
     tx_buffers: [[u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
@@ -88,7 +88,7 @@ pub struct FoAResources {
 impl FoAResources {
     pub fn new() -> Self {
         Self {
-            dma_resources: DMAResources::new(),
+            wifi_resources: WiFiResources::new(),
             #[cfg(feature = "arc_buffers")]
             arc_pool: RxArcPool::new(),
             tx_buffers: [[0u8; TX_BUFFER_SIZE]; TX_BUFFER_COUNT],
@@ -140,17 +140,17 @@ impl<'res> VirtualInterface<'res> {
 }
 
 /// Initialise FoA.
-pub fn init(
-    resources: &mut FoAResources,
+pub fn init<'res>(
+    resources: &'res mut FoAResources,
     wifi: WIFI,
-    radio_clock: RADIO_CLK,
+    radio_clock:  RADIO_CLK<'static>,
     adc2: ADC2,
-) -> ([VirtualInterface<'_>; WiFi::INTERFACE_COUNT], FoARunner<'_>) {
+) -> ([VirtualInterface<'res>; WiFi::INTERFACE_COUNT], FoARunner<'res>) {
     // This is for all transmutes here.
     // # SAFETY:
     // We do this only to avoid self referential structs. All of the destination lifetimes are the
     // lifetime of the resources struct and therefore valid.
-    let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.dma_resources);
+    let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.wifi_resources);
     extern "C" {
         fn phy_set_most_tpw(power: u8);
     }

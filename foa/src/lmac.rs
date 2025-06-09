@@ -367,6 +367,7 @@ impl<'res> LMacInterfaceControl<'res> {
         override_seq_num: true,
         tx_error_behaviour: TxErrorBehaviour::RetryUntil(7),
         ack_timeout: 10,
+        key_slot: None
     };
     /// Transmit a frame.
     ///
