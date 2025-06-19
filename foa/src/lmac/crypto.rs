@@ -14,8 +14,8 @@ pub struct KeySlot<'res> {
 }
 impl KeySlot<'_> {
     /// Get the underlying hardware key slot.
-    pub const fn key_slot(&self) -> u8 {
-        self.key_slot
+    pub const fn key_slot(&self) -> usize {
+        self.key_slot as usize
     }
     /// Set the key used by this slot.
     ///
@@ -64,7 +64,7 @@ impl KeySlotManager {
             .next()
             .inspect(|key_slot| {
                 self.key_slot_state
-                    .store(key_slot_state & bit!(key_slot), Ordering::Relaxed);
+                    .store(key_slot_state & !bit!(key_slot), Ordering::Relaxed);
             })
     }
     /// Release a key slot.

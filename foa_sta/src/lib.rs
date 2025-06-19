@@ -19,10 +19,11 @@
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use connection_state::ConnectionStateTracker;
 use embassy_net::driver::HardwareAddress;
+use embassy_sync::blocking_mutex::NoopMutex;
 use esp_config::esp_config_int;
 use ieee80211::{common::IEEE80211StatusCode, mac_parser::MACAddress};
 
@@ -41,6 +42,7 @@ pub use operations::scan::BSS;
 
 mod runner;
 use rand_core::RngCore;
+use rsn::CryptoState;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
@@ -48,6 +50,8 @@ mod rx_router;
 use rx_router::StaRxRouter;
 mod connection_state;
 pub use connection_state::ConnectionConfig;
+mod rsn;
+pub use rsn::{Credentials, SecurityConfig};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,21 +81,27 @@ pub enum StaError {
     InvalidBss,
     /// Another internal operation is already in progress.
     RouterOperationAlreadyInProgress,
+    /// No credentials were provided for a network, that requires them.
+    NoCredentialsForNetwork,
+    /// The 4-Way Handshake failed.
+    FourWayHandshakeFailure,
+    /// No hardware key slots were unavailable.
+    NoKeySlotsAvailable,
 }
 
 pub const MTU: usize = 1514;
 
-#[derive(Clone)]
 /// TX and RX resources for the interface control and runner.
 pub(crate) struct StaTxRx<'foa, 'vif> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) crypto_state: &'vif NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
     phy_rate: &'vif Cell<WiFiRate>,
 }
 impl StaTxRx<'_, '_> {
     /// Reset the PHY rate.
     pub fn reset_phy_rate(&self) {
-        self.phy_rate.take();
+        self.phy_rate.set(WiFiRate::PhyRate6M);
     }
     /// Get the current PHY rate.
     pub fn phy_rate(&self) -> WiFiRate {
@@ -105,6 +115,17 @@ impl StaTxRx<'_, '_> {
     pub fn in_off_channel_operation(&self) -> bool {
         self.interface_control.off_channel_operation_interface()
             == Some(self.interface_control.get_filter_interface())
+    }
+    pub fn map_crypto_state<O, F: FnMut(&mut CryptoState<'_>) -> O>(&self, f: F) -> Option<O> {
+        self.crypto_state.lock(|cs| cs.borrow_mut().as_mut().map(f))
+    }
+    pub fn rsna_activated(&self) -> bool {
+        self.map_crypto_state(|_| {}).is_some()
+    }
+    pub fn ptk_key_slot_and_id(&self) -> Option<(usize, u8)> {
+        self.map_crypto_state(|crypto_state| {
+            (crypto_state.ptk_key_slot.key_slot(), crypto_state.security_associations.ptksa.key_id)
+        })
     }
 }
 
@@ -125,6 +146,7 @@ pub struct StaResources<'foa> {
 
     // Misc.
     sta_tx_rx: Option<StaTxRx<'static, 'static>>,
+    crypto_state: NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
 }
 impl StaResources<'_> {
     pub const fn new() -> Self {
@@ -134,6 +156,7 @@ impl StaResources<'_> {
             connection_state: ConnectionStateTracker::new(),
             phy_rate: Cell::new(WiFiRate::PhyRate1ML),
             sta_tx_rx: None,
+            crypto_state: NoopMutex::new(RefCell::new(None)),
         }
     }
 }
@@ -175,6 +198,7 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
     .insert(StaTxRx {
         interface_control,
         connection_state: &resources.connection_state,
+        crypto_state: &resources.crypto_state,
         phy_rate: &resources.phy_rate,
     });
     let (state_runner, rx_runner, tx_runner) = net_runner.split();

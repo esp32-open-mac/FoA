@@ -38,7 +38,7 @@ impl RxRouterOperation for StaRxRouterOperation {
                     ManagementFrameSubtype::Authentication
                         | ManagementFrameSubtype::AssociationResponse
                 )
-            )
+            ) || generic_frame.is_eapol_key_frame()
         } else {
             matches!(
                 frame_type,

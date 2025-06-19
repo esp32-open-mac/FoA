@@ -43,8 +43,8 @@ async fn main(_spawner: Spawner) {
         let _ = sta_control.scan::<32>(None, &mut found_bss).await;
         for (_, bss) in found_bss {
             info!(
-                "Found BSS, with SSID: \"{}\", BSSID: {}, channel: {}, last RSSI: {}.",
-                bss.ssid, bss.bssid, bss.channel, bss.last_rssi
+                "Found BSS, with SSID: \"{}\", BSSID: {}, channel: {}, last RSSI: {} Security: {:?}.",
+                bss.ssid, bss.bssid, bss.channel, bss.last_rssi, bss.security_config
             );
         }
     })

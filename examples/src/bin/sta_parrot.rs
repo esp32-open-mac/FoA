@@ -18,7 +18,7 @@ use esp_hal::{
 };
 use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
-use foa_sta::{StaNetDevice, StaResources, StaRunner};
+use foa_sta::{Credentials, StaNetDevice, StaResources, StaRunner};
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
 const SSID: &str = env!("SSID");
@@ -79,7 +79,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);
+    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD")))).await);
 
     info!("Connected to {}.", SSID);
 
