@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "1.0.0-beta.0"
+esp-hal = "1.0.0-beta.1"
 esp-hal-embassy = "0.8.1"
 esp-backtrace = { version = "0.16.0", features = ["panic-handler", "defmt"] }
 esp-println = { version = "0.14.0", features = [

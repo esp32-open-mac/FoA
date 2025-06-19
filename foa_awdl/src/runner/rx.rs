@@ -7,7 +7,7 @@ use embassy_sync::channel::DynamicReceiver;
 use embassy_time::{Duration, Instant, WithTimeout};
 use foa::ReceivedFrame;
 use ieee80211::{
-    data_frame::{DataFrame, DataFrameReadPayload},
+    data_frame::{DataFrame, DataFrameReadPayload, PotentiallyWrappedPayload},
     mac_parser::MACAddress,
     match_frames,
     mgmt_frame::body::action::RawVendorSpecificActionFrame,
@@ -104,7 +104,7 @@ impl AwdlMpduRxRunner<'_, '_> {
         let Some(source_address) = data_frame.header.source_address() else {
             return;
         };
-        let Some(DataFrameReadPayload::Single(payload)) = data_frame.payload else {
+        let Some(PotentiallyWrappedPayload::Unwrapped(DataFrameReadPayload::Single(payload))) = data_frame.potentially_wrapped_payload(None) else {
             return;
         };
         let Ok(llc_frame) = payload.pread::<SnapLlcFrame>(0) else {

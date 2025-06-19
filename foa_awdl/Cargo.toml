@@ -7,7 +7,7 @@ edition = "2021"
 embassy-futures = "0.1.1"
 embassy-sync = "0.7.0"
 embassy-time = "0.4.0"
-ieee80211 = "0.5.6"
+ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
 foa = { path = "../foa/" }
 heapless = "0.8.0"
 rand_core = "0.9.3"

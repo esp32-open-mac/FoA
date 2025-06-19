@@ -5,15 +5,24 @@ use ieee80211::{
     mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
 };
 
-use crate::{rx_router::StaRxRouterEndpoint, StaError, StaTxRx};
+use crate::{rx_router::StaRxRouterEndpoint, SecurityConfig, StaError, StaTxRx};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// Information about a BSS.
 pub struct BSS {
+    /// The SSID of the BSS.
     pub ssid: heapless::String<32>,
+    /// The channel on which the BSS operates.
+    ///
+    /// NOTE: This is taken from the DSSS Parameter Set Element and not just the channel on which
+    /// we received the beacon.
     pub channel: u8,
+    /// The BSSID of the BSS.
     pub bssid: MACAddress,
+    /// The RSSI in dBm of the last frame received from this BSS.
     pub last_rssi: i8,
+    /// The security configuration of the network.
+    pub security_config: SecurityConfig,
 }
 impl BSS {
     /// Create a [BSS] from the information in a beacon or probe response frame.
@@ -28,11 +37,13 @@ impl BSS {
             .get_first_element::<DSSSParameterSetElement>()?
             .current_channel;
         let bssid = frame.header.bssid;
+        let security_config = SecurityConfig::from_beacon_like(&frame);
         Some(Self {
             ssid,
             channel,
             bssid,
             last_rssi: rssi,
+            security_config,
         })
     }
 }
