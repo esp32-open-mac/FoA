@@ -71,7 +71,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
-    // let _ = sta_control.randomize_mac_address();
+    let _ = sta_control.randomize_mac_address();
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
     let (net_stack, net_runner) = embassy_net::new(
@@ -95,7 +95,6 @@ async fn main(spawner: Spawner) {
         "DHCP: Got address {}.",
         net_stack.config_v4().unwrap().address
     );
-    sta_control.force_gtk_rekey().await.unwrap();
 
     let client_state = mk_static!(TcpClientState<4, 1500, 1500>, TcpClientState::new());
     let tcp_client = TcpClient::new(net_stack, client_state);

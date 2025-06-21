@@ -51,6 +51,7 @@ pub struct ConnectionParameters<'a> {
     pub credentials: Option<Credentials<'a>>,
 }
 
+/// Transmit an EAPOL key frame, with the specified parameters.
 pub(crate) async fn send_eapol_key_frame<
     'a,
     KeyMic: AsRef<[u8]>,
@@ -282,6 +283,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         debug!("Assoc frame: {:02x}", response.mpdu_buffer());
         Err(StaError::AssociationFailure(assoc_response.status_code))
     }
+    /// Wait for message 1 to arrive and process it accordingly.
     async fn process_message_1(
         router_operation: &StaRxRouterScopedOperation<'foa, 'vif, 'params>,
         key_replay_counter: &mut u64,
@@ -333,8 +335,8 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
     ) -> Result<(), StaError> {
         send_eapol_key_frame(
             self.sta_tx_rx,
-            self.connection_parameters.own_address,
             bss.bssid,
+            self.connection_parameters.own_address,
             tx_buffer,
             EapolKeyFrame {
                 key_information: KeyInformation::new()
@@ -418,8 +420,8 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
     ) -> Result<(), StaError> {
         send_eapol_key_frame(
             self.sta_tx_rx,
-            self.connection_parameters.own_address,
             bss.bssid,
+            self.connection_parameters.own_address,
             tx_buffer,
             EapolKeyFrame {
                 key_information: KeyInformation::new()

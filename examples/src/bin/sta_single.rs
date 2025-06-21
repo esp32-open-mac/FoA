@@ -78,19 +78,9 @@ async fn main(spawner: Spawner) {
         1234,
     );
 
-    let bss = sta_control
-        .find_ess(
-            Some(ScanConfig {
-                strategy: ScanStrategy::Single(1),
-                ..Default::default()
-            }),
-            SSID,
-        )
-        .await
-        .unwrap();
     defmt::unwrap!(
         sta_control
-            .connect(bss, None, Some(Credentials::Passphrase(env!("PASSWORD"))))
+            .connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD"))))
             .await
     );
     info!("Connected successfully.");
