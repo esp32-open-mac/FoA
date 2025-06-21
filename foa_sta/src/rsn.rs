@@ -212,8 +212,6 @@ impl<const N: usize, const IS_PAIRWISE: bool> TransientKeySecurityAssociation<N,
 #[derive(Debug)]
 /// All security associations used in a WPA2 network.
 pub(crate) struct SecurityAssociations {
-    /// The pairwise master key.
-    pub pmksa: [u8; PMK_LENGTH],
     /// The pairwise transient key.
     pub ptksa: TransientKeySecurityAssociation<PTK_LENGTH, true>,
     /// The group transient key.
@@ -230,6 +228,7 @@ impl SecurityAssociations {
     pub fn group_temporal_key(&self) -> &[u8] {
         self.gtksa.tk(self.akm_suite, self.cipher_suite)
     }
+    /*
     pub fn kck(&self) -> &[u8] {
         partition_ptk(&self.ptksa.key, self.akm_suite, self.cipher_suite)
             .unwrap()
@@ -240,6 +239,7 @@ impl SecurityAssociations {
             .unwrap()
             .1
     }
+    */
 }
 /// State of cryptographic management.
 pub(crate) struct CryptoState<'foa> {
@@ -266,11 +266,13 @@ impl<'foa> CryptoState<'foa> {
         temp.update_key_slot(true, bssid);
         temp
     }
+    /*
     pub fn update_gtksa(&mut self, gtk: &[u8; 16], gtk_key_id: u8, bssid: [u8; 6]) {
         self.security_associations.gtksa.key.copy_from_slice(gtk);
         self.security_associations.gtksa.key_id = gtk_key_id;
         self.update_key_slot(true, bssid);
     }
+    */
     fn update_key_slot(&mut self, group: bool, bssid: [u8; 6]) {
         let (key_slot, tk, key_id, key_type) = if group {
             (

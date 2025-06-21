@@ -525,7 +525,6 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         info!("Sent 4WHS message 4.");
 
         Ok(SecurityAssociations {
-            pmksa: pmk,
             ptksa: ptk,
             gtksa: gtk,
             akm_suite: WPA2_PSK_AKM,

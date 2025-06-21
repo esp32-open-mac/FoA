@@ -11,7 +11,7 @@ use rand_core::RngCore;
 use crate::{
     connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason},
     operations::{
-        connect::{self, ConnectionParameters}, group_key_handshake::force_rekey, scan::{enumerate_bss, search_for_bss, BSS}
+        connect::{self, ConnectionParameters}, scan::{enumerate_bss, search_for_bss, BSS}
     },
     rsn::Credentials,
     rx_router::StaRxRouterEndpoint,
@@ -190,7 +190,4 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
     pub fn override_phy_rate(&self, phy_rate: WiFiRate) {
         self.sta_tx_rx.set_phy_rate(phy_rate);
     }
-    pub async fn force_gtk_rekey(&mut self) -> Result<(), StaError> {
-        force_rekey(self.sta_tx_rx, &self.rx_router_endpoint).await
-    } 
 }
