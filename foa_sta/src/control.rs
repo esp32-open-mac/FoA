@@ -9,10 +9,13 @@ use foa::{
 use rand_core::RngCore;
 
 use crate::{
-    connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason}, operations::{
-        connect::{self, ConnectionParameters},
-        scan::{enumerate_bss, search_for_bss, BSS},
-    }, rsn::Credentials, rx_router::StaRxRouterEndpoint, ConnectionConfig, SecurityConfig, StaTxRx
+    connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason},
+    operations::{
+        connect::{self, ConnectionParameters}, group_key_handshake::force_rekey, scan::{enumerate_bss, search_for_bss, BSS}
+    },
+    rsn::Credentials,
+    rx_router::StaRxRouterEndpoint,
+    ConnectionConfig, SecurityConfig, StaTxRx,
 };
 
 use super::StaError;
@@ -87,7 +90,7 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
         &mut self,
         bss: BSS,
         connection_config: Option<ConnectionConfig>,
-        credentials: Option<Credentials<'_>>
+        credentials: Option<Credentials<'_>>,
     ) -> Result<(), StaError> {
         if bss.security_config != SecurityConfig::Open && credentials.is_none() {
             return Err(StaError::NoCredentialsForNetwork);
@@ -109,9 +112,9 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
                 phy_rate: self.sta_tx_rx.phy_rate(),
                 config: connection_config,
                 own_address: self.mac_address,
-                credentials
+                credentials,
             },
-            self.rng.clone()
+            self.rng.clone(),
         )
         .await?;
         debug!("Successfully connected to {}", bss.bssid);
@@ -132,7 +135,7 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
         &mut self,
         ssid: &str,
         connection_config: Option<ConnectionConfig>,
-        credentials: Option<Credentials<'_>>
+        credentials: Option<Credentials<'_>>,
     ) -> Result<(), StaError> {
         let bss = self.find_ess(None, ssid).await?;
         self.connect(bss, connection_config, credentials).await
@@ -187,4 +190,7 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
     pub fn override_phy_rate(&self, phy_rate: WiFiRate) {
         self.sta_tx_rx.set_phy_rate(phy_rate);
     }
+    pub async fn force_gtk_rekey(&mut self) -> Result<(), StaError> {
+        force_rekey(self.sta_tx_rx, &self.rx_router_endpoint).await
+    } 
 }

@@ -962,7 +962,6 @@ dependencies = [
 [[package]]
 name = "esp-wifi-hal"
 version = "0.1.2"
-source = "git+https://github.com/esp32-open-mac/esp-wifi-hal.git#e7e66aea4b751a42bd73d5e1bee2af5c3ef121c7"
 dependencies = [
  "bitfield-struct",
  "cfg-if",
@@ -1085,7 +1084,7 @@ dependencies = [
  "esp-hal",
  "esp-wifi-hal",
  "heapless 0.8.0",
- "ieee80211 0.5.6 (git+https://github.com/Frostie314159/ieee80211-rs.git?branch=crypto)",
+ "ieee80211 0.5.6",
  "portable-atomic",
  "static_cell",
 ]
@@ -1106,7 +1105,7 @@ dependencies = [
  "ethernet",
  "foa",
  "heapless 0.8.0",
- "ieee80211 0.5.6",
+ "ieee80211 0.5.6 (git+https://github.com/Frostie314159/ieee80211-rs.git?branch=crypto)",
  "llc-rs",
  "rand_core 0.9.3",
  "smoltcp",
@@ -1127,7 +1126,7 @@ dependencies = [
  "ethernet",
  "foa",
  "heapless 0.8.0",
- "ieee80211 0.5.6 (git+https://github.com/Frostie314159/ieee80211-rs.git?branch=crypto)",
+ "ieee80211 0.5.6",
  "llc-rs",
  "portable-atomic",
  "rand_core 0.9.3",

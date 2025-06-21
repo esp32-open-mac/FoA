@@ -821,6 +821,7 @@ dependencies = [
  "bitfield-struct",
  "const_soft_float",
  "crc32fast",
+ "defmt 1.0.1",
  "digest",
  "hmac",
  "llc-rs",
@@ -916,6 +917,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b31995b891e21d023d0e7732e8ea7634ca58101f1352b159eb64234824d899f8"
 dependencies = [
+ "defmt 1.0.1",
  "scroll",
 ]
 

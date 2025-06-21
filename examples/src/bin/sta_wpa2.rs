@@ -76,7 +76,11 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD")))).await);
+    defmt::unwrap!(
+        sta_control
+            .connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD"))))
+            .await
+    );
     info!("Connected successfully.");
 
     // Wait for DHCP, not necessary when using static IP

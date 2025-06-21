@@ -9,7 +9,8 @@ embassy-futures = "0.1.1"
 
 esp-hal = "1.0.0-beta.1"
 # esp-wifi-hal = "0.1.2"
-esp-wifi-hal = { git = "https://github.com/esp32-open-mac/esp-wifi-hal.git" }
+# esp-wifi-hal = { git = "https://github.com/esp32-open-mac/esp-wifi-hal.git" }
+esp-wifi-hal = { path = "../../esp-wifi-hal/esp-wifi-hal" }
 static_cell = "2.1.0"
 critical-section = "1.2.0"
 portable-atomic = "1.11.1"
@@ -17,7 +18,8 @@ esp-config = "0.4.0"
 defmt-or-log = { version = "0.2.1", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 embassy-time = "0.4.0"
-ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
+ieee80211 = { path = "../../../rust/ieee80211/" }
+# ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
 heapless = "0.8.0"
 
 [build-dependencies]

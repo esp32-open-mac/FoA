@@ -51,7 +51,8 @@ use ieee80211::GenericFrame;
 
 use crate::ReceivedFrame;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// The queues inside the [RxRouter].
 pub enum RxRouterQueue {
     #[default]
@@ -97,6 +98,8 @@ pub trait RxRouterOperation: Clone + Copy {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// Errors returned by the RX router.
 pub enum RxRouterError {
     OperationAlreadyInProgress,
@@ -268,6 +271,8 @@ impl<'foa, Operation: RxRouterOperation> RxRouterInput<'foa, '_, Operation> {
         self.rx_router.operation_state(router_queue).get()
     }
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TransitionNotPossibleError;
 /// A scoped router operation.
 ///
 /// The operation will end, if either [RxRouterScopedOperation::complete] or this is dropped.
@@ -278,6 +283,20 @@ pub struct RxRouterScopedOperation<'foa, 'router, 'endpoint, Operation: RxRouter
 impl<Operation: RxRouterOperation> RxRouterScopedOperation<'_, '_, '_, Operation> {
     /// Mark the operation as completed.
     pub fn complete(self) {}
+    /// Transition to another operation type.
+    ///
+    /// If the transition is not possible, this will restore the previously active operation and
+    /// return a [TransitionNotPossibleError].
+    pub fn transition(&mut self, operation: Operation) -> Result<(), TransitionNotPossibleError> {
+        let previous_operation = self.stop_operation_internal().expect("The only way this could be None is, if this function was called during Drop.");
+        if self.can_start_operation(operation).is_ok() {
+            self.start_operation_internal(operation);
+            Ok(())
+        } else {
+            self.start_operation_internal(previous_operation);
+            Err(TransitionNotPossibleError)
+        }
+    }
 }
 impl<'foa, 'router, Operation: RxRouterOperation> Deref
     for RxRouterScopedOperation<'foa, 'router, '_, Operation>
@@ -289,12 +308,8 @@ impl<'foa, 'router, Operation: RxRouterOperation> Deref
 }
 impl<O: RxRouterOperation> Drop for RxRouterScopedOperation<'_, '_, '_, O> {
     fn drop(&mut self) {
-        // Due to how `Cell` works, this resets it back to `None`.
-        self.endpoint
-            .rx_router
-            .operation_state(self.endpoint.router_queue)
-            .take();
-        self.endpoint.rx_router.completion_signal().signal(());
+        self.stop_operation_internal();
+        self.signal_completion_internal();
     }
 }
 /// An endpoint for one of the two [RxRouter] queues.
@@ -338,6 +353,16 @@ impl<'foa, 'router, Operation: RxRouterOperation> RxRouterEndpoint<'foa, 'router
             .operation_state(self.router_queue)
             .set(Some(operation));
     }
+    /// Stop any active operation.
+    ///
+    /// This will return any previously active operation.
+    fn stop_operation_internal(&self) -> Option<Operation> {
+        self.rx_router.operation_state(self.router_queue).take()
+    }
+    /// Signal the completion of an operation.
+    fn signal_completion_internal(&self) {
+        self.rx_router.completion_signal().signal(());
+    }
     /// Attempt to start a router operation.
     ///
     /// If another operation is currently active, [RxRouterError::OperationAlreadyInProgress] will
@@ -350,6 +375,7 @@ impl<'foa, 'router, Operation: RxRouterOperation> RxRouterEndpoint<'foa, 'router
         self.start_operation_internal(operation);
         Ok(RxRouterScopedOperation { endpoint: self })
     }
+    /// Start an operation and asynchronously wait for another operation to finish.
     pub async fn start_operation<'endpoint>(
         &'endpoint mut self,
         operation: Operation,

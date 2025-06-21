@@ -19,12 +19,10 @@ embassy-net = { version = "0.7.0", features = [
     "proto-ipv4",
     "dhcpv4",
     "medium-ethernet",
-    "proto-ipv6",
     "tcp",
     "udp",
     "dns",
     "defmt",
-    "packet-trace",
 ] }
 embassy-futures = { version = "0.1.1", features = ["defmt"] }
 embassy-time = { version = "0.4.0", features = ["defmt"] }

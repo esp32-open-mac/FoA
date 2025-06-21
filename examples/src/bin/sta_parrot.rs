@@ -17,7 +17,10 @@ use esp_hal::{
     Async,
 };
 use esp_println as _;
-use foa::{FoAResources, FoARunner, VirtualInterface};
+use foa::{
+    util::operations::{ScanConfig, ScanStrategy},
+    FoAResources, FoARunner, VirtualInterface,
+};
 use foa_sta::{Credentials, StaNetDevice, StaResources, StaRunner};
 use reqwless::{client::HttpClient, request::Method, response::BodyReader};
 
@@ -68,7 +71,7 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
-    let _ = sta_control.randomize_mac_address();
+    // let _ = sta_control.randomize_mac_address();
 
     let net_stack_resources = mk_static!(NetStackResources<3>, NetStackResources::new());
     let (net_stack, net_runner) = embassy_net::new(
@@ -79,7 +82,11 @@ async fn main(spawner: Spawner) {
     );
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD")))).await);
+    defmt::unwrap!(
+        sta_control
+            .connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD"))))
+            .await
+    );
 
     info!("Connected to {}.", SSID);
 
@@ -88,6 +95,7 @@ async fn main(spawner: Spawner) {
         "DHCP: Got address {}.",
         net_stack.config_v4().unwrap().address
     );
+    sta_control.force_gtk_rekey().await.unwrap();
 
     let client_state = mk_static!(TcpClientState<4, 1500, 1500>, TcpClientState::new());
     let tcp_client = TcpClient::new(net_stack, client_state);
@@ -96,29 +104,35 @@ async fn main(spawner: Spawner) {
 
     let rx_buf = mk_static!([u8; 8192], [0; 8192]);
 
-    let mut request = http_client
-        .request(Method::GET, "http://parrot.live/")
-        .await
-        .unwrap();
-    let response = request.send(rx_buf).await.unwrap();
-    let BodyReader::Chunked(mut chunked_reader) = response.body().reader() else {
-        panic!()
-    };
     let parrot_buffer = mk_static!([u8; 1119], [0u8; 1119]);
     #[cfg(feature = "esp32")]
     let (rx_pin, tx_pin) = (peripherals.GPIO3, peripherals.GPIO1);
     #[cfg(feature = "esp32s2")]
     let (rx_pin, tx_pin) = (peripherals.GPIO44, peripherals.GPIO43);
-
     let mut uart = Uart::new(peripherals.UART0, uart::Config::default())
         .unwrap()
         .with_rx(rx_pin)
         .with_tx(tx_pin)
         .into_async();
     loop {
-        let _ = chunked_reader.read_exact(parrot_buffer).await;
-        let _ =
-            <Uart<'static, Async> as embedded_io_async::Write>::write_all(&mut uart, parrot_buffer)
-                .await;
+        let mut request = http_client
+            .request(Method::GET, "http://parrot.live/")
+            .await
+            .unwrap();
+        let response = request.send(rx_buf).await.unwrap();
+        let BodyReader::Chunked(mut chunked_reader) = response.body().reader() else {
+            panic!()
+        };
+
+        loop {
+            let Ok(_) = chunked_reader.read_exact(parrot_buffer).await else {
+                break;
+            };
+            let _ = <Uart<'static, Async> as embedded_io_async::Write>::write_all(
+                &mut uart,
+                parrot_buffer,
+            )
+            .await;
+        }
     }
 }

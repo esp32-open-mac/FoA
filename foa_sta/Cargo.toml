@@ -23,7 +23,8 @@ esp-config = "0.4.0"
 ethernet = { version = "0.1.6", default-features = false }
 foa = { path = "../foa/" }
 heapless = "0.8.0"
-ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
+ieee80211 = { path = "../../../rust/ieee80211/" }
+# ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
 llc-rs = "0.1.1"
 rand_core = "0.9.3"
 portable-atomic = "1.11.1"

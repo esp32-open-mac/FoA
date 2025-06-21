@@ -137,4 +137,8 @@ impl ConnectionStateTracker {
             self.connection_state_signal.wait().await;
         }
     }
+    /// Get the BSSID and our own address for the current connection.
+    pub fn bssid_and_own_address(&self) -> Option<(MACAddress, MACAddress)> {
+        self.map_connection_info(|connection_info| (connection_info.bss.bssid, connection_info.own_address))
+    }
 }

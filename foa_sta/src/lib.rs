@@ -87,6 +87,10 @@ pub enum StaError {
     FourWayHandshakeFailure,
     /// No hardware key slots were unavailable.
     NoKeySlotsAvailable,
+    /// The provided PSK length didn't match what was expected.
+    InvalidPskLength,
+    /// The group key handshake failed.
+    GroupKeyHandshakeFailure,
 }
 
 pub const MTU: usize = 1514;
@@ -101,7 +105,7 @@ pub(crate) struct StaTxRx<'foa, 'vif> {
 impl StaTxRx<'_, '_> {
     /// Reset the PHY rate.
     pub fn reset_phy_rate(&self) {
-        self.phy_rate.set(WiFiRate::PhyRate6M);
+        self.phy_rate.take();
     }
     /// Get the current PHY rate.
     pub fn phy_rate(&self) -> WiFiRate {
@@ -121,11 +125,6 @@ impl StaTxRx<'_, '_> {
     }
     pub fn rsna_activated(&self) -> bool {
         self.map_crypto_state(|_| {}).is_some()
-    }
-    pub fn ptk_key_slot_and_id(&self) -> Option<(usize, u8)> {
-        self.map_crypto_state(|crypto_state| {
-            (crypto_state.ptk_key_slot.key_slot(), crypto_state.security_associations.ptksa.key_id)
-        })
     }
 }
 

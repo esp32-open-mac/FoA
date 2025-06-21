@@ -12,10 +12,12 @@ use ieee80211::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Operations used by the STA interface.
 pub enum StaRxRouterOperation {
-    /// Connecting to a network.
-    ///
-    /// The MAC address is the address we use to connect to the network. NOT the BSSID.
-    Connecting(MACAddress),
+    /// Authenticating with a network.
+    Authenticating { own_address: MACAddress },
+    /// Associating with a network.
+    Associating { own_address: MACAddress },
+    /// Performing a 4WHS with a network.
+    CryptoHandshake { own_address: MACAddress },
     /// Scanning for networks.
     Scanning,
 }
@@ -23,7 +25,9 @@ impl StaRxRouterOperation {
     /// Get the address we're currently using to connect to a network.
     pub const fn connecting_mac_address(self) -> Option<MACAddress> {
         match self {
-            Self::Connecting(mac_address) => Some(mac_address),
+            Self::Authenticating { own_address }
+            | Self::Associating { own_address }
+            | Self::CryptoHandshake { own_address } => Some(own_address),
             _ => None,
         }
     }
@@ -31,21 +35,20 @@ impl StaRxRouterOperation {
 impl RxRouterOperation for StaRxRouterOperation {
     fn frame_relevant_for_operation(&self, generic_frame: &GenericFrame<'_>) -> bool {
         let frame_type = generic_frame.frame_control_field().frame_type();
-        if let Self::Connecting(_) = self {
-            matches!(
-                frame_type,
-                FrameType::Management(
-                    ManagementFrameSubtype::Authentication
-                        | ManagementFrameSubtype::AssociationResponse
-                )
-            ) || generic_frame.is_eapol_key_frame()
-        } else {
-            matches!(
+        match self {
+            Self::Scanning => matches!(
                 frame_type,
                 FrameType::Management(
                     ManagementFrameSubtype::Beacon | ManagementFrameSubtype::ProbeResponse
                 )
-            )
+            ),
+            Self::Authenticating { .. } => {
+                frame_type == FrameType::Management(ManagementFrameSubtype::Authentication)
+            }
+            Self::Associating { .. } => {
+                frame_type == FrameType::Management(ManagementFrameSubtype::AssociationResponse)
+            }
+            Self::CryptoHandshake { .. } => generic_frame.is_eapol_key_frame(),
         }
     }
 }

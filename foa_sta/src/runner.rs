@@ -272,13 +272,14 @@ impl RoutingRunner<'_, '_> {
                     let security_associations = &crypto_state.security_associations;
                     let packet_number = crypto_wrapper.crypto_header.packet_number();
                     let packet_number_valid = if is_group {
-                        security_associations.gtksa.update_and_validate_replay_counter(packet_number)
+                        security_associations
+                            .gtksa
+                            .update_and_validate_replay_counter(packet_number)
                     } else {
-                        security_associations.ptksa.update_and_validate_replay_counter(packet_number)
+                        security_associations
+                            .ptksa
+                            .update_and_validate_replay_counter(packet_number)
                     };
-                    if !packet_number_valid {
-                        debug!("RX packet number lower than own replay counter.");
-                    }
                     packet_number_valid.then_some(crypto_wrapper.payload)
                 })
                 .flatten()?,
@@ -315,7 +316,7 @@ impl RoutingRunner<'_, '_> {
             return None;
         };
         self.rx_runner.rx_done(written);
-        info!("Received {} bytes from {}", written, source_address);
+        trace!("Received {} bytes from {}", written, source_address);
         Some(())
     }
     /// Forward a received data frame to higher layers.
@@ -387,7 +388,14 @@ impl RoutingRunner<'_, '_> {
             }
             // To reduce latency, we process all data frames here directly, if we are connected.
             if self.sta_tx_rx.connection_state.connected() {
-                if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type() {
+                if generic_frame.is_eapol_key_frame() {
+                    // This distinction is here, since GTK rekeys will happen, and those frames
+                    // should go to the background task.
+                    if !self.sta_tx_rx.rsna_activated() {
+                        debug!("Discarding EAPOL Key Frame, since RSNA isn't activated.");
+                    }
+                } else if let FrameType::Data(_) = generic_frame.frame_control_field().frame_type()
+                {
                     let Some(Ok(data_frame)) = generic_frame.parse_to_typed() else {
                         continue;
                     };
