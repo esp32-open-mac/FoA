@@ -82,7 +82,7 @@ pub enum SecurityConfig {
     Invalid,
 }
 impl SecurityConfig {
-    pub fn from_beacon_like<Subtype>(frame: &ManagementFrame<BeaconLikeBody<'_, Subtype>>) -> Self {
+    pub(crate) fn from_beacon_like<Subtype>(frame: &ManagementFrame<BeaconLikeBody<'_, Subtype>>) -> Self {
         let Some(rsn) = frame.elements.get_first_element::<RsnElement>() else {
             return Self::Open;
         };

@@ -36,8 +36,9 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "awdl-frame-parser"
-version = "0.4.0"
-source = "git+https://github.com/Frostie314159/awdl-frame-parser.git#b66fa22cfd2793114dd8d1703dd33e85514ab3fb"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b683b834a51956ab8841c84d32b06064032ce97008997680f052a8dbcd1e8539"
 dependencies = [
  "bitfield-struct",
  "ether-type",
@@ -661,8 +662,9 @@ dependencies = [
 
 [[package]]
 name = "esp-wifi-hal"
-version = "0.1.2"
-source = "git+https://github.com/esp32-open-mac/esp-wifi-hal.git#e7e66aea4b751a42bd73d5e1bee2af5c3ef121c7"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7838d40d074742d5f46c3660217788c133793fc8cdb5af80225433131233646"
 dependencies = [
  "bitfield-struct",
  "cfg-if",
@@ -712,9 +714,9 @@ dependencies = [
 
 [[package]]
 name = "ether-type"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29cff11db17ff664d8ed0801e8a372fcda247f5131cd9f9ee68d2c6b07f7c870"
+checksum = "e886b8e15547bd98f54a78b5ad1b381d825fa8cd09c088615fc00e26957fabd7"
 dependencies = [
  "macro-bits",
 ]
@@ -738,7 +740,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foa"
-version = "0.1.0-alpha.0"
+version = "0.1.0"
 dependencies = [
  "critical-section",
  "defmt 1.0.1",
@@ -750,7 +752,7 @@ dependencies = [
  "esp-hal",
  "esp-wifi-hal",
  "heapless",
- "ieee80211 0.5.6 (git+https://github.com/Frostie314159/ieee80211-rs.git?branch=crypto)",
+ "ieee80211",
  "portable-atomic",
  "static_cell",
 ]
@@ -771,7 +773,7 @@ dependencies = [
  "ethernet",
  "foa",
  "heapless",
- "ieee80211 0.5.6",
+ "ieee80211",
  "llc-rs",
  "rand_core 0.9.3",
  "smoltcp",
@@ -880,35 +882,15 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "ieee80211"
-version = "0.5.6"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c708bbeae0b32ebeb6847424a9561a1a10855b9357309427c884dc93c181e7d"
 dependencies = [
  "aes-kw",
  "bitfield-struct",
  "const_soft_float",
  "crc32fast",
  "defmt 1.0.1",
- "digest",
- "hmac",
- "llc-rs",
- "mac-parser",
- "macro-bits",
- "num",
- "pbkdf2",
- "scroll",
- "sha1",
- "sha2",
- "tlv-rs",
-]
-
-[[package]]
-name = "ieee80211"
-version = "0.5.6"
-source = "git+https://github.com/Frostie314159/ieee80211-rs.git?branch=crypto#4b6d27d56a4bb32c8249923119c8699eafd44416"
-dependencies = [
- "aes-kw",
- "bitfield-struct",
- "const_soft_float",
- "crc32fast",
  "digest",
  "hmac",
  "llc-rs",
@@ -983,9 +965,9 @@ dependencies = [
 
 [[package]]
 name = "llc-rs"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb44e5d2a86b05c50007d8858e8a66de9e79c3873de23da752eae8b7071b2ff1"
+checksum = "33bd85503d851a892baeffb0c56799623e908f55a92d912eabbe568c6e1af45b"
 dependencies = [
  "ether-type",
  "macro-bits",

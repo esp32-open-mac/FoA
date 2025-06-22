@@ -7,12 +7,11 @@ edition = "2021"
 embassy-futures = "0.1.1"
 embassy-sync = "0.7.0"
 embassy-time = "0.4.0"
-ieee80211 = { git = "https://github.com/Frostie314159/ieee80211-rs.git", branch = "crypto" }
+ieee80211 = "0.5.7"
 foa = { path = "../foa/" }
 heapless = "0.8.0"
 rand_core = "0.9.3"
 defmt = { version = "1.0.1", optional = true }
-awdl-frame-parser = { git = "https://github.com/Frostie314159/awdl-frame-parser.git" }
 defmt-or-log = { version = "0.2.1", default-features = false }
 esp-config = "0.4.0"
 embassy-net-driver-channel = "0.3.0"
@@ -24,6 +23,7 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
   "proto-ipv6",
   "socket-raw",
 ] }
+awdl-frame-parser = "0.4.1"
 
 [build-dependencies]
 esp-config = { version = "0.4.0", features = ["build"] }

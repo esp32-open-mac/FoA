@@ -1,5 +1,5 @@
 #![no_std]
-
+#![deny(missing_docs)]
 //! This crate implements a station (STA) interface for FoA.
 //!
 //! ## Usage
@@ -93,6 +93,7 @@ pub enum StaError {
     GroupKeyHandshakeFailure,
 }
 
+/// The MTU used by the STA interface.
 pub const MTU: usize = 1514;
 
 /// TX and RX resources for the interface control and runner.
@@ -148,6 +149,7 @@ pub struct StaResources<'foa> {
     crypto_state: NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
 }
 impl StaResources<'_> {
+    /// Create new resources for the STA interface.
     pub const fn new() -> Self {
         Self {
             rx_router: RxRouter::new(),
@@ -165,6 +167,7 @@ impl Default for StaResources<'_> {
     }
 }
 
+/// embassy_net device for the STA interface.
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
 /// Initialize a new STA interface.

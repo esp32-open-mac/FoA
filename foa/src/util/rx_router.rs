@@ -78,6 +78,10 @@ impl RxRouterQueue {
 ///
 /// It is expected, that frames like beacons and probe responses will be matched for this operation.
 pub trait HasScanOperation: RxRouterOperation {
+    /// Does a scan like router operation exist.
+    ///
+    /// At the moment, the requirement for this is, that all beacon frames will be matched by
+    /// that operation.
     const SCAN_OPERATION: Self;
 }
 
@@ -100,12 +104,15 @@ pub trait RxRouterOperation: Clone + Copy {
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-/// Errors returned by the RX router.
-pub enum RxRouterError {
+/// Errors related to router operations.
+pub enum RxRouterOperationError {
+    /// Another router operation is already in progress for this queue.
+    ///
+    /// This does not mean, that the request operation is incompatible with that of the other
+    /// queue. [Self::IncompatibleOperations] indicates this instead.
     OperationAlreadyInProgress,
+    /// The requested operation is incompatible with the one on the other queue.
     IncompatibleOperations,
-    QueueFull,
-    InvalidFrame,
 }
 
 /// Used for dynamic dispatch.
@@ -114,7 +121,7 @@ trait Router<'foa, Operation: RxRouterOperation> {
     fn receive(&self, router_queue: RxRouterQueue)
         -> DynamicReceiveFuture<'_, ReceivedFrame<'foa>>;
     //// Route a frame to a specific queue.
-    fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterError>;
+    fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterRoutingError>;
     /// Get the operation state for the specified [RxRouterQueue].
     fn operation_state(&self, router_queue: RxRouterQueue) -> &Cell<Option<Operation>>;
     /// Get the operation completion signal.
@@ -147,6 +154,15 @@ impl<const QUEUE_DEPTH: usize, O: RxRouterOperation> QueueState<'_, QUEUE_DEPTH,
     fn operation_active(&self) -> bool {
         self.operation_state.get().is_some()
     }
+}
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// An error related to the routing of a received frame.
+pub enum RxRouterRoutingError {
+    /// The queue, that the frame was supposed to be routed to, is full.
+    QueueFull,
+    /// The frame could not parsed.
+    InvalidFrame,
 }
 
 /// The core of the RX router.
@@ -215,11 +231,11 @@ impl<'foa, const QUEUE_DEPTH: usize, Operation: RxRouterOperation> Router<'foa, 
     ) -> DynamicReceiveFuture<'_, ReceivedFrame<'foa>> {
         self.queue_state(router_queue).queue.receive().into()
     }
-    fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterError> {
+    fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterRoutingError> {
         // Usually the RX handler will have already created a GenericFrame, however we can't
         // reasonably assume that, so we recreate it here and hope the compiler opimizes away.
         let Ok(generic_frame) = GenericFrame::new(frame.mpdu_buffer(), false) else {
-            return Err(RxRouterError::InvalidFrame);
+            return Err(RxRouterRoutingError::InvalidFrame);
         };
         let router_queue = if self
             .foreground_queue_state
@@ -239,7 +255,7 @@ impl<'foa, const QUEUE_DEPTH: usize, Operation: RxRouterOperation> Router<'foa, 
         if self.queue_state(router_queue).queue.try_send(frame).is_ok() {
             Ok(())
         } else {
-            Err(RxRouterError::QueueFull)
+            Err(RxRouterRoutingError::QueueFull)
         }
     }
     fn operation_state(&self, router_queue: RxRouterQueue) -> &Cell<Option<Operation>> {
@@ -264,14 +280,17 @@ pub struct RxRouterInput<'foa, 'router, Operation: RxRouterOperation> {
 
 impl<'foa, Operation: RxRouterOperation> RxRouterInput<'foa, '_, Operation> {
     /// Route the provided frame to the correct queue.
-    pub fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterError> {
+    pub fn route_frame(&self, frame: ReceivedFrame<'foa>) -> Result<(), RxRouterRoutingError> {
         self.rx_router.route_frame(frame)
     }
+    /// Get the currently active operation for the specified [RxRouterQueue].
     pub fn operation(&self, router_queue: RxRouterQueue) -> Option<Operation> {
         self.rx_router.operation_state(router_queue).get()
     }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The requested operation transition is not possible, due to it being incompatible with another
+/// currently active operation.
 pub struct TransitionNotPossibleError;
 /// A scoped router operation.
 ///
@@ -329,16 +348,16 @@ impl<'foa, 'router, Operation: RxRouterOperation> RxRouterEndpoint<'foa, 'router
         self.rx_router.receive(self.router_queue)
     }
     /// Check if the operation can be started.
-    fn can_start_operation(&self, operation: Operation) -> Result<(), RxRouterError> {
+    fn can_start_operation(&self, operation: Operation) -> Result<(), RxRouterOperationError> {
         if let Some(opposing_operation) = self
             .rx_router
             .operation_state(self.router_queue.opposite())
             .get()
         {
             if !Operation::CONCORRUENT_OPERATIONS_SUPPORTED {
-                Err(RxRouterError::OperationAlreadyInProgress)
+                Err(RxRouterOperationError::OperationAlreadyInProgress)
             } else if !opposing_operation.compatible_with(&operation) {
-                Err(RxRouterError::IncompatibleOperations)
+                Err(RxRouterOperationError::IncompatibleOperations)
             } else {
                 Ok(())
             }
@@ -370,7 +389,7 @@ impl<'foa, 'router, Operation: RxRouterOperation> RxRouterEndpoint<'foa, 'router
     pub fn try_start_operation<'endpoint>(
         &'endpoint mut self,
         operation: Operation,
-    ) -> Result<RxRouterScopedOperation<'foa, 'router, 'endpoint, Operation>, RxRouterError> {
+    ) -> Result<RxRouterScopedOperation<'foa, 'router, 'endpoint, Operation>, RxRouterOperationError> {
         self.can_start_operation(operation)?;
         self.start_operation_internal(operation);
         Ok(RxRouterScopedOperation { endpoint: self })

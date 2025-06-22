@@ -30,7 +30,10 @@ use ieee80211::{
     scroll::Pwrite,
 };
 
-use crate::{peer_cache::AwdlPeerCache, state::CommonResources, AwdlEvent, APPLE_OUI, AWDL_BSSID};
+use crate::{
+    event::PeerEventServiceParameters, peer_cache::AwdlPeerCache, state::CommonResources,
+    AwdlEvent, APPLE_OUI, AWDL_BSSID,
+};
 
 /// Runner for the AWDL interface.
 pub struct AwdlManagementRunner<'foa, 'vif> {
@@ -199,11 +202,13 @@ impl AwdlManagementRunner<'_, '_> {
                         peer_cache.purge_stale_peers(
                             |address, peer| {
                                 self.common_resources
-                                    .raise_user_event(AwdlEvent::PeerWentStale {
-                                        address: *address,
-                                        airdrop_port: peer.airdrop_port,
-                                        airplay_port: peer.airplay_port,
-                                    });
+                                    .raise_user_event(AwdlEvent::PeerWentStale(
+                                        PeerEventServiceParameters {
+                                            address: *address,
+                                            airdrop_port: peer.airdrop_port,
+                                            airplay_port: peer.airplay_port,
+                                        },
+                                    ));
                             },
                             timeout,
                         )

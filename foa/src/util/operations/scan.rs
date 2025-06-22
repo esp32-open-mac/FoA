@@ -8,12 +8,18 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// This specifies the order in which channels should be scanned.
 pub enum ScanStrategy<'a> {
+    /// Only a single channel should be scanned.
     Single(u8),
+    /// Only the current channel should be scanned.
     CurrentChannel,
+    /// Scan the channels in ascending order (i.e. 1-13).
     Linear,
     #[default]
+    /// Scan the channels in groups of three non overlapping channels (i.e. 1, 6, 11, 2, 7, 12 etc.).
     NonOverlappingFirst,
+    /// Use a custom channel sequence.
     Custom(&'a [u8]),
 }
 
