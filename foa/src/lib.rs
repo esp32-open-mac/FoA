@@ -162,12 +162,6 @@ pub fn init<'res>(
     // We do this only to avoid self referential structs. All of the destination lifetimes are the
     // lifetime of the resources struct and therefore valid.
     let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.wifi_resources);
-    extern "C" {
-        fn phy_set_most_tpw(power: u8);
-    }
-    unsafe {
-        phy_set_most_tpw(84);
-    }
     let shared_lmac_state = resources
         .shared_lmac_state
         .insert(SharedLMacState::new(wifi));

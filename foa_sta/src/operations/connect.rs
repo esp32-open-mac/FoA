@@ -456,7 +456,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
 
         let mut supplicant_nonce = [0u8; 32];
         rng.fill_bytes(&mut supplicant_nonce);
-        info!(
+        debug!(
             "Starting 4WHS. PMK: {:02x}; SNonce: {:02x}",
             pmk, supplicant_nonce
         );
@@ -464,7 +464,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
 
         let authenticator_nonce =
             Self::process_message_1(router_operation, &mut key_replay_counter).await;
-        info!(
+        debug!(
             "Processed 4WHS message 1. ANonce: {:02x}",
             authenticator_nonce
         );
@@ -485,7 +485,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         )
         .unwrap();
         let (kck, kek): ([u8; 16], [u8; 16]) = (kck.try_into().unwrap(), kek.try_into().unwrap());
-        info!(
+        debug!(
             "Derived PTK. KCK: {:02x} KEK: {:02x}, TK: {:02x}",
             kck, kek, tk
         );
@@ -501,7 +501,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             key_replay_counter,
         )
         .await?;
-        info!("Sent 4WHS message 2.");
+        debug!("Sent 4WHS message 2.");
 
         let gtk = Self::process_message_3(
             router_operation,
@@ -511,7 +511,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             &mut key_replay_counter,
         )
         .await;
-        info!(
+        debug!(
             "Processed 4WHS message 3. GTK: {:02x} GTK Key ID: {}",
             gtk.key, gtk.key_id
         );
@@ -524,7 +524,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             key_replay_counter,
         )
         .await?;
-        info!("Sent 4WHS message 4.");
+        debug!("Sent 4WHS message 4.");
 
         Ok(SecurityAssociations {
             ptksa: ptk,

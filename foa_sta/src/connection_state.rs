@@ -101,7 +101,7 @@ impl ConnectionStateTracker {
     /// [Self::connection_info], this avoids copying the entire [ConnectionInfo].
     pub fn map_connection_info<O>(&self, f: impl FnOnce(&ConnectionInfo) -> O) -> Option<O> {
         self.connection_state.lock(|state| {
-            if let ConnectionState::Connected(ref connection_info) = state.borrow().deref() {
+            if let ConnectionState::Connected(connection_info) = state.borrow().deref() {
                 Some((f)(connection_info))
             } else {
                 None

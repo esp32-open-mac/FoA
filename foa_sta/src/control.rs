@@ -117,7 +117,7 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
             self.rng.clone(),
         )
         .await?;
-        debug!("Successfully connected to {}", bss.bssid);
+        debug!("Successfully connected to {} : \"{}\"", bss.bssid, bss.ssid.as_str());
         self.sta_tx_rx
             .connection_state
             .signal_state(ConnectionState::Connected(ConnectionInfo {
