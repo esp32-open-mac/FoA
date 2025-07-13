@@ -28,6 +28,7 @@ async fn awdl_task(mut runner: AwdlRunner<'static, 'static>) -> ! {
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
+    esp_bootloader_esp_idf::esp_app_desc!();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);

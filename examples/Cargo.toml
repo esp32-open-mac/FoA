@@ -47,6 +47,7 @@ reqwless = { version = "0.13.0", default-features = false, features = [
 rand_core = "0.9.3"
 embedded-io = "0.6.1"
 esp-alloc = "0.8.0"
+esp-bootloader-esp-idf = "0.1.0"
 
 [profile.dev]
 # Rust debug is too slow.
