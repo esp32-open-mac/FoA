@@ -16,8 +16,20 @@
 //! ### Supported operations.
 //! 1. Passive scanning
 //! 2. Connecting to a network.
+//!     - Both Open and WPA2-PSK encrypted networks
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
+//!
+//! ## A note about the WPA2 implementation
+//! `foa_sta` has an implementation of WPA2-PSK, which allows it to connect to networks using that
+//! cipher suite. It is however extremely basic and in very early stages of development. This means
+//! that it may crash at any point during the connection process and is not very secure. Most of
+//! this is down to the way it is written, which was intended to get it working and figure out how
+//! to do this at all. A new design using a state machine is already in the works, but it will take
+//! some time to be ready.
+//!
+//! (Frostie314159): The reason this will take a while is, because I worked on WPA2 for two months
+//! straight to get it working and sorta need to take my mind of it for a while.
 
 use core::cell::{Cell, RefCell};
 
