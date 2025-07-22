@@ -37,6 +37,7 @@ async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> 
     net_runner.run().await
 }
 async fn run_net_stack(spawner: &Spawner, net_device: StaNetDevice<'static>) {
+    esp_bootloader_esp_idf::esp_app_desc!();
     let net_stack_resources = Box::new(NetStackResources::<3>::new());
     let (net_stack, net_runner) = embassy_net::new(
         net_device,
@@ -118,7 +119,7 @@ async fn main(spawner: Spawner) {
     join_array(stas.map(|(mut sta_control, sta_net_device)| {
         let bss = bss.clone();
         async move {
-            sta_control.connect(bss, None).await.unwrap();
+            sta_control.connect(bss, None, None).await.unwrap();
             run_net_stack(&spawner, sta_net_device).await;
         }
     }))

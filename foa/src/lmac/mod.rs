@@ -16,25 +16,29 @@
 //! Which can then be granted or rejected.
 use core::{
     array,
-    cell::{Cell, RefCell},
-    future::poll_fn,
-    task::Poll,
+    cell::RefCell,
 };
 
+use crypto::KeySlotManager;
 use embassy_futures::join::join_array;
 use embassy_sync::{
     blocking_mutex::{self, raw::NoopRawMutex},
     mutex::Mutex,
-    waitqueue::AtomicWaker,
     watch::{DynReceiver, Watch},
 };
 use esp_hal::efuse::Efuse;
 use esp_wifi_hal::{
-    BorrowedBuffer, RxFilterBank, ScanningMode, TxErrorBehaviour, TxParameters, WiFi, WiFiRate,
-    WiFiResult,
+    BorrowedBuffer, RxFilterBank, ScanningMode, TxErrorBehaviour, TxParameters,
+    WiFi, WiFiRate, WiFiResult,
 };
+use off_channel::OffChannelRequester;
+pub use off_channel::{OffChannelOperation, OffChannelRequest};
+pub use crypto::KeySlot;
 
 use crate::tx_buffer_management::{DynTxBufferManager, TxBuffer};
+
+mod off_channel;
+mod crypto;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 /// The status of the channel lock.
@@ -95,14 +99,6 @@ impl ChannelState {
         self.off_channel_operation_interface.is_some()
     }
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OffChannelRequestState {
-    #[default]
-    NotRequested,
-    Requested,
-    Granted,
-    Rejected,
-}
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,81 +116,6 @@ pub enum LMacError {
     OffChannelOperationAlreadyInProgress,
 }
 
-/// An off channel request.
-///
-/// This can be used, to grant an off channel operation, after it has been requested.
-/// If this is dropped, the off channel request will be automatically rejected.
-pub struct OffChannelRequest<'a> {
-    requester: &'a OffChannelRequester,
-}
-impl OffChannelRequest<'_> {
-    /// Grant the request.
-    pub fn grant(self) {
-        self.requester.status.set(OffChannelRequestState::Granted);
-        self.requester.response_waker.wake();
-        core::mem::forget(self);
-    }
-    /// Reject the off channel request.
-    pub fn reject(self) {
-        // Dropping will automatically reject the request.
-    }
-}
-impl Drop for OffChannelRequest<'_> {
-    fn drop(&mut self) {
-        self.requester.status.set(OffChannelRequestState::Rejected);
-        self.requester.response_waker.wake();
-    }
-}
-
-/// This implements the mechanism to asynchronously request grants for off channel operations from
-/// interfaces.
-struct OffChannelRequester {
-    status: Cell<OffChannelRequestState>,
-    request_waker: AtomicWaker,
-    response_waker: AtomicWaker,
-}
-impl OffChannelRequester {
-    pub const fn new() -> Self {
-        Self {
-            status: Cell::new(OffChannelRequestState::NotRequested),
-            request_waker: AtomicWaker::new(),
-            response_waker: AtomicWaker::new(),
-        }
-    }
-    pub async fn request(&self) -> Result<(), LMacError> {
-        self.status.set(OffChannelRequestState::Requested);
-        self.request_waker.wake();
-        poll_fn(|cx| {
-            let status = self.status.get();
-            match status {
-                OffChannelRequestState::Granted => Poll::Ready(Ok(())),
-                OffChannelRequestState::Rejected => {
-                    Poll::Ready(Err(LMacError::OffChannelRequestRejected))
-                }
-                _ => {
-                    self.response_waker.register(cx.waker());
-                    Poll::Pending
-                }
-            }
-        })
-        .await?;
-        self.status.set(OffChannelRequestState::NotRequested);
-        Ok(())
-    }
-    pub async fn wait_for_request(&self) -> OffChannelRequest<'_> {
-        poll_fn(|cx| {
-            let status = self.status.get();
-            if status == OffChannelRequestState::Requested {
-                Poll::Ready(OffChannelRequest { requester: self })
-            } else {
-                self.request_waker.register(cx.waker());
-                Poll::Pending
-            }
-        })
-        .await
-    }
-}
-
 pub(crate) struct SharedLMacState {
     wifi: WiFi<'static>,
     // Channel Management
@@ -205,6 +126,8 @@ pub(crate) struct SharedLMacState {
     channel_state: blocking_mutex::NoopMutex<RefCell<ChannelState>>,
     off_channel_requesters: [OffChannelRequester; WiFi::INTERFACE_COUNT],
     off_channel_completion_signal: Watch<NoopRawMutex, (), { WiFi::INTERFACE_COUNT }>,
+
+    key_slot_manager: KeySlotManager
 }
 impl SharedLMacState {
     pub const fn new(wifi: WiFi<'_>) -> Self {
@@ -216,6 +139,7 @@ impl SharedLMacState {
             })),
             off_channel_requesters: [const { OffChannelRequester::new() }; WiFi::INTERFACE_COUNT],
             off_channel_completion_signal: Watch::new(),
+            key_slot_manager: KeySlotManager::new()
         }
     }
     pub fn split<'res>(
@@ -230,7 +154,7 @@ impl SharedLMacState {
             core::array::from_fn(|i| {
                 LMacInterfaceControl {
                 shared_state: self,
-                rx_filter_interface: i,
+                interface: i,
                 dyn_tx_buffer_manager,
                 off_channel_completion_listener: Mutex::new(
                     self.off_channel_completion_signal.dyn_receiver().expect("This shouldn't be able to fail, since we have as many receivers as interface controls."),
@@ -245,68 +169,6 @@ impl SharedLMacState {
                 .map(|channel_state| *channel_state)
                 .unwrap_or_default()
         })
-    }
-}
-
-/// An active off channel operation.
-///
-/// When dropped, this will terminate the off channel operation and reset the channel and scanning
-/// mode.
-pub struct OffChannelOperation<'a, 'res> {
-    interface_control: &'a LMacInterfaceControl<'res>,
-    previously_locked_channel: Option<u8>,
-    rx_filter_interface: usize,
-}
-impl OffChannelOperation<'_, '_> {
-    /// Set the channel.
-    pub fn set_channel(&mut self, channel: u8) -> Result<(), LMacError> {
-        self.interface_control
-            .shared_state
-            .wifi
-            .set_channel(channel)
-            .map_err(|_| LMacError::InvalidChannel)
-    }
-    /// Set the scanning mode.
-    pub fn set_scanning_mode(&mut self, scanning_mode: ScanningMode) {
-        let _ = self
-            .interface_control
-            .shared_state
-            .wifi
-            .set_scanning_mode(self.rx_filter_interface, scanning_mode);
-    }
-}
-impl Drop for OffChannelOperation<'_, '_> {
-    fn drop(&mut self) {
-        // This accounts for the locked channel having changed during the operation.
-        if let Some(channel) = self
-            .interface_control
-            .shared_state
-            .get_channel_state()
-            .locks
-            .map(|(_, channel)| channel)
-            .or(self.previously_locked_channel)
-        {
-            debug!("Switched back to channel {}.", channel);
-            let _ = self.set_channel(channel);
-        }
-        self.set_scanning_mode(ScanningMode::Disabled);
-        self.interface_control
-            .shared_state
-            .channel_state
-            .lock(|cs| {
-                let _ = cs
-                    .try_borrow_mut()
-                    .map(|mut channel_state| channel_state.off_channel_operation_interface = None);
-            });
-        self.interface_control
-            .shared_state
-            .off_channel_completion_signal
-            .sender()
-            .send(());
-        debug!(
-            "Off channel operation for interface {} finished.",
-            self.rx_filter_interface
-        );
     }
 }
 
@@ -337,7 +199,7 @@ impl InterfaceBringupOperation<'_, '_> {
     pub fn complete(self) {
         debug!(
             "Interface bringup operation completed for interface {}.",
-            self.lmac_interface_control.rx_filter_interface
+            self.lmac_interface_control.interface
         );
         core::mem::forget(self);
     }
@@ -355,7 +217,7 @@ impl Drop for InterfaceBringupOperation<'_, '_> {
 pub struct LMacInterfaceControl<'res> {
     shared_state: &'res SharedLMacState,
     /// The RX filter interface, this logical interface corresponds to.
-    rx_filter_interface: usize,
+    interface: usize,
     /// Access to the TX buffer manager.
     dyn_tx_buffer_manager: DynTxBufferManager<'res>,
     off_channel_completion_listener: Mutex<NoopRawMutex, DynReceiver<'res, ()>>,
@@ -367,7 +229,7 @@ impl<'res> LMacInterfaceControl<'res> {
         override_seq_num: true,
         tx_error_behaviour: TxErrorBehaviour::RetryUntil(7),
         ack_timeout: 10,
-        key_slot: None
+        key_slot: None,
     };
     /// Transmit a frame.
     ///
@@ -385,7 +247,7 @@ impl<'res> LMacInterfaceControl<'res> {
             .transmit(
                 buffer,
                 tx_parameters,
-                wait_for_ack.then_some(self.rx_filter_interface),
+                wait_for_ack.then_some(self.interface),
             )
             .await
     }
@@ -406,7 +268,7 @@ impl<'res> LMacInterfaceControl<'res> {
             .transmit_with_hook(
                 buffer,
                 tx_parameters,
-                wait_for_ack.then_some(self.rx_filter_interface),
+                wait_for_ack.then_some(self.interface),
                 pre_transmit_hook,
             )
             .await
@@ -422,16 +284,16 @@ impl<'res> LMacInterfaceControl<'res> {
             // It's again assumed here, that no other lock on the channel state is currently being
             // held, so this will never fail.
             cs.try_borrow_mut().map_or(Ok(false), |mut channel_state| {
-                channel_state.lock_channel(self.rx_filter_interface, channel)
+                channel_state.lock_channel(self.interface, channel)
             })
         })? {
             if self.shared_state.wifi.set_channel(channel).is_ok() {
                 debug!(
                     "Switched to channel {} while acquiring channel lock for interface {}.",
-                    channel, self.rx_filter_interface
+                    channel, self.interface
                 );
             } else {
-                debug!("Attempted to acquire channel lock for interface {} on channel {}, which is invalid.", self.rx_filter_interface, channel);
+                debug!("Attempted to acquire channel lock for interface {} on channel {}, which is invalid.", self.interface, channel);
                 self.unlock_channel_internal();
                 return Err(LMacError::InvalidChannel);
             }
@@ -442,7 +304,7 @@ impl<'res> LMacInterfaceControl<'res> {
         self.shared_state.channel_state.lock(|rc| {
             let _ = rc
                 .try_borrow_mut()
-                .map(|mut channel_state| channel_state.unlock_channel(self.rx_filter_interface));
+                .map(|mut channel_state| channel_state.unlock_channel(self.interface));
         });
     }
     /// Begin an interface bringup operation.
@@ -468,14 +330,14 @@ impl<'res> LMacInterfaceControl<'res> {
             Ok(_) => {
                 debug!(
                     "Successfully started interface bringup operation for interface {} on channel: {}.",
-                    self.rx_filter_interface,
+                    self.interface,
                     channel
                 );
             }
             Err(err) => {
                 debug!(
                     "Failed to start interface bringup operation for interface {} on channel {}.",
-                    self.rx_filter_interface, channel
+                    self.interface, channel
                 );
                 return Err(err);
             }
@@ -492,12 +354,12 @@ impl<'res> LMacInterfaceControl<'res> {
         if res.is_ok() {
             debug!(
                 "Successfully acquired lock on channel {} for interface {}.",
-                channel, self.rx_filter_interface
+                channel, self.interface
             );
         } else {
             debug!(
                 "Failed to acquire lock on channel {} for interface {}.",
-                channel, self.rx_filter_interface
+                channel, self.interface
             );
         }
 
@@ -507,7 +369,7 @@ impl<'res> LMacInterfaceControl<'res> {
     pub fn unlock_channel(&self) {
         debug!(
             "Releasing channel lock for interface {}.",
-            self.rx_filter_interface
+            self.interface
         );
         self.unlock_channel_internal();
     }
@@ -566,16 +428,16 @@ impl<'res> LMacInterfaceControl<'res> {
         }
         self.shared_state.channel_state.lock(|cs| {
             if let Ok(mut channel_state) = cs.try_borrow_mut() {
-                channel_state.off_channel_operation_interface = Some(self.rx_filter_interface);
+                channel_state.off_channel_operation_interface = Some(self.interface);
             }
         });
         debug!(
             "Successfully started off channel operation for interface {}.",
-            self.rx_filter_interface
+            self.interface
         );
         Ok(OffChannelOperation {
             interface_control: self,
-            rx_filter_interface: self.rx_filter_interface,
+            rx_filter_interface: self.interface,
             previously_locked_channel: self
                 .shared_state
                 .get_channel_state()
@@ -598,7 +460,7 @@ impl<'res> LMacInterfaceControl<'res> {
     }
     /// Wait for an off channel operations request to arrive, which can then be granted or rejected.
     pub async fn wait_for_off_channel_request(&self) -> OffChannelRequest<'_> {
-        self.shared_state.off_channel_requesters[self.rx_filter_interface]
+        self.shared_state.off_channel_requesters[self.interface]
             .wait_for_request()
             .await
     }
@@ -624,7 +486,7 @@ impl<'res> LMacInterfaceControl<'res> {
 
     /// Returns the id of the filter interface.
     pub fn get_filter_interface(&self) -> usize {
-        self.rx_filter_interface
+        self.interface
     }
     /// Get the factory MAC address for this interface.
     ///
@@ -632,7 +494,7 @@ impl<'res> LMacInterfaceControl<'res> {
     /// last octet.
     pub fn get_factory_mac_for_interface(&self) -> [u8; 6] {
         let mut base_mac = Efuse::read_base_mac_address();
-        base_mac[5] += self.rx_filter_interface as u8;
+        base_mac[5] += self.interface as u8;
         base_mac
     }
     /// Get the current channel.
@@ -652,11 +514,11 @@ impl<'res> LMacInterfaceControl<'res> {
         let _ =
             self.shared_state
                 .wifi
-                .set_filter(bank, self.rx_filter_interface, mac_address, mask);
+                .set_filter(bank, self.interface, mac_address, mask);
         trace!(
             "Set {:?} filter for interface {} to address {:?} and mask {:?}.",
             bank,
-            self.rx_filter_interface,
+            self.interface,
             mac_address,
             mask
         );
@@ -668,12 +530,12 @@ impl<'res> LMacInterfaceControl<'res> {
         let _ = self
             .shared_state
             .wifi
-            .set_filter_status(bank, self.rx_filter_interface, enabled);
+            .set_filter_status(bank, self.interface, enabled);
         trace!(
             "{} {:?} filter for interface {}.",
             bank,
             if enabled { "Enabled" } else { "Disabled" },
-            self.rx_filter_interface
+            self.interface
         );
     }
     /// Set the scanning mode of the RX filter interface.
@@ -683,10 +545,10 @@ impl<'res> LMacInterfaceControl<'res> {
         let _ = self
             .shared_state
             .wifi
-            .set_scanning_mode(self.rx_filter_interface, scanning_mode);
+            .set_scanning_mode(self.interface, scanning_mode);
         trace!(
             "Set scanning mode for interface {} to {:?}.",
-            self.rx_filter_interface,
+            self.interface,
             scanning_mode
         );
     }
@@ -698,11 +560,11 @@ impl<'res> LMacInterfaceControl<'res> {
         let _ = self
             .shared_state
             .wifi
-            .set_filter_bssid_check(self.rx_filter_interface, enabled);
+            .set_filter_bssid_check(self.interface, enabled);
         trace!(
             "{} BSSID check for interface {}.",
             if enabled { "Enabled" } else { "Disabled" },
-            self.rx_filter_interface
+            self.interface
         );
     }
     /// Get the current MAC time from the Wi-Fi driver.
@@ -710,5 +572,15 @@ impl<'res> LMacInterfaceControl<'res> {
     /// For further documentation see [WiFi::mac_time].
     pub fn mac_time(&self) -> u32 {
         self.shared_state.wifi.mac_time()
+    }
+    /// Attempt to acquire a key slot.
+    pub fn acquire_key_slot(&self) -> Option<KeySlot<'res>> {
+        self.shared_state.key_slot_manager.acquire_key_slot().inspect(|key_slot| {
+            debug!("Key Slot {} was acquired by interface {}.", key_slot, self.interface);
+        }).map(|key_slot| KeySlot {
+            shared_state: self.shared_state,
+            key_slot,
+            interface: self.interface as u8,
+        })
     }
 }

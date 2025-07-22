@@ -8,5 +8,7 @@ The `foa` crate contains the LMAC, TX buffer management and RX ARC buffer manage
 `examples` contain a set of examples showing how to use different parts of the stack.
 ## Usage
 For a concrete usage example, see `examples`. These examples can be run with `./run_example.sh <EXAMPLE_NAME> <CHIP> [SSID] [LOG_LEVEL]`.
+## Note
+The docs sometimes contain anecdotes I left during coding, since I believe them to be interesting.
 ## License
 This project is licensed under Apache 2.0 or MIT at your option.

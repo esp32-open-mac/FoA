@@ -101,7 +101,7 @@ impl ConnectionStateTracker {
     /// [Self::connection_info], this avoids copying the entire [ConnectionInfo].
     pub fn map_connection_info<O>(&self, f: impl FnOnce(&ConnectionInfo) -> O) -> Option<O> {
         self.connection_state.lock(|state| {
-            if let ConnectionState::Connected(ref connection_info) = state.borrow().deref() {
+            if let ConnectionState::Connected(connection_info) = state.borrow().deref() {
                 Some((f)(connection_info))
             } else {
                 None
@@ -136,5 +136,10 @@ impl ConnectionStateTracker {
             }
             self.connection_state_signal.wait().await;
         }
+    }
+    #[allow(unused)]
+    /// Get the BSSID and our own address for the current connection.
+    pub fn bssid_and_own_address(&self) -> Option<(MACAddress, MACAddress)> {
+        self.map_connection_info(|connection_info| (connection_info.bss.bssid, connection_info.own_address))
     }
 }

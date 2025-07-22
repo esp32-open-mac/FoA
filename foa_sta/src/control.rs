@@ -11,11 +11,11 @@ use rand_core::RngCore;
 use crate::{
     connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason},
     operations::{
-        connect::{self, ConnectionParameters},
-        scan::{enumerate_bss, search_for_bss, BSS},
+        connect::{self, ConnectionParameters}, scan::{enumerate_bss, search_for_bss, BSS}
     },
+    rsn::Credentials,
     rx_router::StaRxRouterEndpoint,
-    ConnectionConfig, StaTxRx,
+    ConnectionConfig, SecurityConfig, StaTxRx,
 };
 
 use super::StaError;
@@ -31,7 +31,7 @@ pub struct StaControl<'foa, 'vif, Rng: RngCore> {
     /// Entropy source for the STA implementation.
     pub(crate) rng: Rng,
 }
-impl<Rng: RngCore> StaControl<'_, '_, Rng> {
+impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
     /// Set the MAC address for the STA interface.
     pub fn set_mac_address(&mut self, mac_address: [u8; 6]) -> Result<(), StaError> {
         if self.sta_tx_rx.connection_state.connection_info().is_some() {
@@ -90,7 +90,11 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         &mut self,
         bss: BSS,
         connection_config: Option<ConnectionConfig>,
+        credentials: Option<Credentials<'_>>,
     ) -> Result<(), StaError> {
+        if bss.security_config != SecurityConfig::Open && credentials.is_none() {
+            return Err(StaError::NoCredentialsForNetwork);
+        }
         if let Some(connection_info) = self.sta_tx_rx.connection_state.connection_info() {
             if connection_info.bss.bssid == bss.bssid {
                 return Err(StaError::SameNetwork);
@@ -108,10 +112,12 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
                 phy_rate: self.sta_tx_rx.phy_rate(),
                 config: connection_config,
                 own_address: self.mac_address,
+                credentials,
             },
+            self.rng.clone(),
         )
         .await?;
-        debug!("Successfully connected to {}", bss.bssid);
+        debug!("Successfully connected to {} : \"{}\"", bss.bssid, bss.ssid.as_str());
         self.sta_tx_rx
             .connection_state
             .signal_state(ConnectionState::Connected(ConnectionInfo {
@@ -129,9 +135,10 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         &mut self,
         ssid: &str,
         connection_config: Option<ConnectionConfig>,
+        credentials: Option<Credentials<'_>>,
     ) -> Result<(), StaError> {
         let bss = self.find_ess(None, ssid).await?;
-        self.connect(bss, connection_config).await
+        self.connect(bss, connection_config, credentials).await
     }
     async fn disconnect_internal(
         &mut self,

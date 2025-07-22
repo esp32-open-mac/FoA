@@ -1,5 +1,5 @@
 #![no_std]
-
+#![deny(missing_docs)]
 //! This crate implements a station (STA) interface for FoA.
 //!
 //! ## Usage
@@ -16,13 +16,26 @@
 //! ### Supported operations.
 //! 1. Passive scanning
 //! 2. Connecting to a network.
+//!     - Both Open and WPA2-PSK encrypted networks
 //! 3. Disconnecting from a network.
 //! 4. Setting the MAC address.
+//!
+//! ## A note about the WPA2 implementation
+//! `foa_sta` has an implementation of WPA2-PSK, which allows it to connect to networks using that
+//! cipher suite. It is however extremely basic and in very early stages of development. This means
+//! that it may crash at any point during the connection process and is not very secure. Most of
+//! this is down to the way it is written, which was intended to get it working and figure out how
+//! to do this at all. A new design using a state machine is already in the works, but it will take
+//! some time to be ready.
+//!
+//! (Frostie314159): The reason this will take a while is, because I worked on WPA2 for two months
+//! straight to get it working and sorta need to take my mind of it for a while.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use connection_state::ConnectionStateTracker;
 use embassy_net::driver::HardwareAddress;
+use embassy_sync::blocking_mutex::NoopMutex;
 use esp_config::esp_config_int;
 use ieee80211::{common::IEEE80211StatusCode, mac_parser::MACAddress};
 
@@ -41,6 +54,7 @@ pub use operations::scan::BSS;
 
 mod runner;
 use rand_core::RngCore;
+use rsn::CryptoState;
 pub use runner::StaRunner;
 use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
@@ -48,6 +62,8 @@ mod rx_router;
 use rx_router::StaRxRouter;
 mod connection_state;
 pub use connection_state::ConnectionConfig;
+mod rsn;
+pub use rsn::{Credentials, SecurityConfig};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,15 +93,26 @@ pub enum StaError {
     InvalidBss,
     /// Another internal operation is already in progress.
     RouterOperationAlreadyInProgress,
+    /// No credentials were provided for a network, that requires them.
+    NoCredentialsForNetwork,
+    /// The 4-Way Handshake failed.
+    FourWayHandshakeFailure,
+    /// No hardware key slots were unavailable.
+    NoKeySlotsAvailable,
+    /// The provided PSK length didn't match what was expected.
+    InvalidPskLength,
+    /// The group key handshake failed.
+    GroupKeyHandshakeFailure,
 }
 
+/// The MTU used by the STA interface.
 pub const MTU: usize = 1514;
 
-#[derive(Clone)]
 /// TX and RX resources for the interface control and runner.
 pub(crate) struct StaTxRx<'foa, 'vif> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) connection_state: &'vif ConnectionStateTracker,
+    pub(crate) crypto_state: &'vif NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
     phy_rate: &'vif Cell<WiFiRate>,
 }
 impl StaTxRx<'_, '_> {
@@ -106,6 +133,12 @@ impl StaTxRx<'_, '_> {
         self.interface_control.off_channel_operation_interface()
             == Some(self.interface_control.get_filter_interface())
     }
+    pub fn map_crypto_state<O, F: FnMut(&mut CryptoState<'_>) -> O>(&self, f: F) -> Option<O> {
+        self.crypto_state.lock(|cs| cs.borrow_mut().as_mut().map(f))
+    }
+    pub fn rsna_activated(&self) -> bool {
+        self.map_crypto_state(|_| {}).is_some()
+    }
 }
 
 pub(crate) const RX_QUEUE_DEPTH: usize = esp_config_int!(usize, "FOA_STA_CONFIG_RX_QUEUE_DEPTH");
@@ -125,8 +158,10 @@ pub struct StaResources<'foa> {
 
     // Misc.
     sta_tx_rx: Option<StaTxRx<'static, 'static>>,
+    crypto_state: NoopMutex<RefCell<Option<CryptoState<'foa>>>>,
 }
 impl StaResources<'_> {
+    /// Create new resources for the STA interface.
     pub const fn new() -> Self {
         Self {
             rx_router: RxRouter::new(),
@@ -134,6 +169,7 @@ impl StaResources<'_> {
             connection_state: ConnectionStateTracker::new(),
             phy_rate: Cell::new(WiFiRate::PhyRate1ML),
             sta_tx_rx: None,
+            crypto_state: NoopMutex::new(RefCell::new(None)),
         }
     }
 }
@@ -143,6 +179,7 @@ impl Default for StaResources<'_> {
     }
 }
 
+/// embassy_net device for the STA interface.
 pub type StaNetDevice<'a> = embassy_net_driver_channel::Device<'a, MTU>;
 
 /// Initialize a new STA interface.
@@ -175,6 +212,7 @@ pub fn new_sta_interface<'foa: 'vif, 'vif, Rng: RngCore + Clone>(
     .insert(StaTxRx {
         interface_control,
         connection_state: &resources.connection_state,
+        crypto_state: &resources.crypto_state,
         phy_rate: &resources.phy_rate,
     });
     let (state_runner, rx_runner, tx_runner) = net_runner.split();

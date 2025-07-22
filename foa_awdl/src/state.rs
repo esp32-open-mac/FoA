@@ -186,6 +186,7 @@ pub struct AwdlResources {
     pub(crate) net_state: NetState<AWDL_MTU, NET_RX_BUFFERS, NET_TX_BUFFERS>,
 }
 impl AwdlResources {
+    /// Create new resources for the AWDL interface.
     pub const fn new() -> Self {
         Self {
             common_resources: CommonResources::new(),

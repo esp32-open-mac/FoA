@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(missing_docs)]
 //! This crate implements an Apple Wireless Direct Link (AWDL) interface for FoA.
 //!
 //! ## What is AWDL?
@@ -66,6 +67,7 @@ pub(crate) const EVENT_QUEUE_DEPTH: usize =
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// Errors that can occur with the AWDL interface.
 pub enum AwdlError {
+    /// Acquiring the LMAC channel lock failed.
     FailedToAcquireChannelLock,
 }
 

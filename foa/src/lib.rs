@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(missing_docs)]
 //! # Ferris-on-Air (FoA)
 //! Ferris-on-Air is an asynchronous IEEE 802.11 MAC stack for the ESP32 series of chips. It is
 //! build on top of [esp_wifi_hal], which is the driver for the Wi-Fi peripheral, and is based on
@@ -64,13 +65,16 @@ pub mod util;
 const RX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_RX_BUFFER_COUNT");
 const RX_QUEUE_LEN: usize = esp_config_int!(usize, "FOA_CONFIG_RX_QUEUE_LEN");
 const TX_BUFFER_COUNT: usize = esp_config_int!(usize, "FOA_CONFIG_TX_BUFFER_COUNT");
-// This is fixed, so that interfaces can rely on the size of a TX buffer.
+/// The size of a [TxBuffer].
+///
+/// This is fixed, so that interfaces can rely on the size of a TX buffer.
 pub const TX_BUFFER_SIZE: usize = 1600;
 
 /// A frame received from the driver.
 #[cfg(feature = "arc_buffers")]
 pub type ReceivedFrame<'res> = RxArcBuffer<'res>;
 #[cfg(not(feature = "arc_buffers"))]
+/// A frame received from the driver.
 pub type ReceivedFrame<'res> = BorrowedBuffer<'res>;
 /// A receiver to the RX queue of an interface.
 pub type RxQueueReceiver<'res> = DynamicReceiver<'res, ReceivedFrame<'res>>;
@@ -86,6 +90,10 @@ pub struct FoAResources {
     rx_queues: [Channel<NoopRawMutex, ReceivedFrame<'static>, RX_QUEUE_LEN>; WiFi::INTERFACE_COUNT],
 }
 impl FoAResources {
+    /// Create new stack resources.
+    ///
+    /// This has to be in internal RAM, since the DMA descriptors and buffers for the Wi-Fi driver
+    /// have to be in internal RAM.
     pub fn new() -> Self {
         Self {
             wifi_resources: WiFiResources::new(),
@@ -124,6 +132,9 @@ impl<'res> VirtualInterface<'res> {
     ) {
         (&mut self.interface_control, &mut self.rx_queue_receiver)
     }
+    /// Reset the virtual interface.
+    ///
+    /// This is releases any prior channel lock, resets all filters and clears the RX queue.
     pub fn reset(&mut self) {
         // We can't call clear on a DynamicReceiver, so this is the best we can do for now.
         // This isn't too bad, since this will only be called rarely and the RX queues shouldn't be
@@ -151,12 +162,6 @@ pub fn init<'res>(
     // We do this only to avoid self referential structs. All of the destination lifetimes are the
     // lifetime of the resources struct and therefore valid.
     let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.wifi_resources);
-    extern "C" {
-        fn phy_set_most_tpw(power: u8);
-    }
-    unsafe {
-        phy_set_most_tpw(84);
-    }
     let shared_lmac_state = resources
         .shared_lmac_state
         .insert(SharedLMacState::new(wifi));

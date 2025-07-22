@@ -14,8 +14,11 @@ use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println as _;
 
-use foa::{FoAResources, FoARunner, VirtualInterface};
-use foa_sta::{StaNetDevice, StaResources, StaRunner};
+use foa::{
+    util::operations::{ScanConfig, ScanStrategy},
+    FoAResources, FoARunner, VirtualInterface,
+};
+use foa_sta::{Credentials, StaNetDevice, StaResources, StaRunner};
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -42,6 +45,7 @@ async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> 
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
+    esp_bootloader_esp_idf::esp_app_desc!();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -74,11 +78,15 @@ async fn main(spawner: Spawner) {
         net_stack_resources,
         1234,
     );
-    spawner.spawn(net_task(net_runner)).unwrap();
 
-    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);
+    defmt::unwrap!(
+        sta_control
+            .connect_by_ssid(SSID, None, Some(Credentials::Passphrase(env!("PASSWORD"))))
+            .await
+    );
     info!("Connected successfully.");
 
+    spawner.spawn(net_task(net_runner)).unwrap();
     // Wait for DHCP, not necessary when using static IP
     info!("waiting for DHCP...");
     net_stack.wait_config_up().await;

@@ -1,7 +1,7 @@
 [package]
 name = "foa_sta"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 defmt = { version = "1.0.1", optional = true }
@@ -20,12 +20,13 @@ embassy-net-driver-channel = "0.3.0"
 embassy-sync = "0.7.0"
 embassy-time = "0.4.0"
 esp-config = "0.4.0"
-ethernet = { version = "0.1.5", default-features = false }
+ethernet = { version = "0.1.6", default-features = false }
 foa = { path = "../foa/" }
 heapless = "0.8.0"
-ieee80211 = { version = "0.5.6", default-features = false }
-llc-rs = "0.1.0"
+llc-rs = "0.1.1"
 rand_core = "0.9.3"
+portable-atomic = "1.11.1"
+ieee80211 = "0.5.7"
 
 [build-dependencies]
 esp-config = { version = "0.4.0", features = ["build"] }
@@ -35,4 +36,4 @@ esp32 = ["foa/esp32"]
 esp32s2 = ["foa/esp32s2"]
 
 log = ["defmt-or-log/log"]
-defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
+defmt = ["dep:defmt", "defmt-or-log/defmt", "foa/defmt"]

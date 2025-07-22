@@ -32,6 +32,7 @@ async fn sta_task(mut sta_runner: StaRunner<'static, 'static>) -> ! {
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
+    esp_bootloader_esp_idf::esp_app_desc!();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -57,7 +58,7 @@ async fn main(spawner: Spawner) {
     let mac_address = sta_control.randomize_mac_address();
     info!("Using MAC address: {:#x}", mac_address);
 
-    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None).await);
+    defmt::unwrap!(sta_control.connect_by_ssid(SSID, None, None).await);
     info!(
         "Connected to {} with AID: {:?}",
         SSID,

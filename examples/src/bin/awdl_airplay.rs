@@ -42,6 +42,7 @@ async fn net_task(mut net_runner: NetRunner<'static, AwdlNetDevice<'static>>) ->
 }
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
+    esp_bootloader_esp_idf::esp_app_desc!();
     heap_allocator!(size: 10 * 1024);
     let peripherals = esp_hal::init(esp_hal::Config::default());
 

@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "1.0.0-beta.0"
+esp-hal = "1.0.0-beta.1"
 esp-hal-embassy = "0.8.1"
 esp-backtrace = { version = "0.16.0", features = ["panic-handler", "defmt"] }
 esp-println = { version = "0.14.0", features = [
@@ -19,12 +19,10 @@ embassy-net = { version = "0.7.0", features = [
     "proto-ipv4",
     "dhcpv4",
     "medium-ethernet",
-    "proto-ipv6",
     "tcp",
     "udp",
     "dns",
     "defmt",
-    "packet-trace",
 ] }
 embassy-futures = { version = "0.1.1", features = ["defmt"] }
 embassy-time = { version = "0.4.0", features = ["defmt"] }
@@ -49,6 +47,7 @@ reqwless = { version = "0.13.0", default-features = false, features = [
 rand_core = "0.9.3"
 embedded-io = "0.6.1"
 esp-alloc = "0.8.0"
+esp-bootloader-esp-idf = "0.1.0"
 
 [profile.dev]
 # Rust debug is too slow.
