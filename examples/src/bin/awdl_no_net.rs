@@ -38,7 +38,6 @@ async fn main(spawner: Spawner) {
     let ([awdl_vif, ..], foa_runner) = foa::init(
         foa_resources,
         peripherals.WIFI,
-        peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
     spawner.spawn(foa_task(foa_runner)).unwrap();

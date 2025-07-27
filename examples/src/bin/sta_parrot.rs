@@ -18,7 +18,6 @@ use esp_hal::{
 };
 use esp_println as _;
 use foa::{
-    util::operations::{ScanConfig, ScanStrategy},
     FoAResources, FoARunner, VirtualInterface,
 };
 use foa_sta::{Credentials, StaNetDevice, StaResources, StaRunner};
@@ -59,7 +58,6 @@ async fn main(spawner: Spawner) {
     let ([sta_vif, ..], foa_runner) = foa::init(
         stack_resources,
         peripherals.WIFI,
-        peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
     spawner.spawn(foa_task(foa_runner)).unwrap();

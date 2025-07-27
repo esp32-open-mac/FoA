@@ -33,8 +33,8 @@ use embassy_sync::{
     channel::{Channel, DynamicReceiver},
 };
 use esp_config::esp_config_int;
-use esp_hal::peripherals::{ADC2, RADIO_CLK, WIFI};
-use esp_wifi_hal::{WiFiResources, RxFilterBank, ScanningMode, WiFi};
+use esp_hal::peripherals::{ADC2, WIFI};
+use esp_wifi_hal::{RxFilterBank, ScanningMode, WiFi, WiFiResources};
 use lmac::SharedLMacState;
 
 #[cfg(not(feature = "arc_buffers"))]
@@ -154,14 +154,24 @@ impl<'res> VirtualInterface<'res> {
 pub fn init<'res>(
     resources: &'res mut FoAResources,
     wifi: WIFI,
-    radio_clock:  RADIO_CLK<'static>,
     adc2: ADC2,
-) -> ([VirtualInterface<'res>; WiFi::INTERFACE_COUNT], FoARunner<'res>) {
+) -> (
+    [VirtualInterface<'res>; WiFi::INTERFACE_COUNT],
+    FoARunner<'res>,
+) {
     // This is for all transmutes here.
     // # SAFETY:
     // We do this only to avoid self referential structs. All of the destination lifetimes are the
     // lifetime of the resources struct and therefore valid.
-    let wifi = WiFi::new(wifi, radio_clock, adc2, &mut resources.wifi_resources);
+    let wifi = WiFi::new(wifi, adc2, &mut resources.wifi_resources);
+    unsafe extern "C" {
+        fn phy_set_most_tpw(power: u8);
+    }
+
+    unsafe {
+        phy_set_most_tpw(84);
+    }
+
     let shared_lmac_state = resources
         .shared_lmac_state
         .insert(SharedLMacState::new(wifi));

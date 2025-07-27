@@ -2,14 +2,14 @@
 name = "examples"
 version = "0.1.0"
 authors = ["Frostie314159 <frostie.neuenhausen@gmail.com>"]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "1.0.0-beta.1"
-esp-hal-embassy = "0.8.1"
-esp-backtrace = { version = "0.16.0", features = ["panic-handler", "defmt"] }
-esp-println = { version = "0.14.0", features = [
+esp-hal = "=1.0.0-rc.0"
+esp-hal-embassy = "0.9.0"
+esp-backtrace = { version = "0.17.0", features = ["panic-handler", "defmt"] }
+esp-println = { version = "0.15.0", features = [
     "defmt-espflash",
     "critical-section",
     "uart",
@@ -47,7 +47,7 @@ reqwless = { version = "0.13.0", default-features = false, features = [
 rand_core = "0.9.3"
 embedded-io = "0.6.1"
 esp-alloc = "0.8.0"
-esp-bootloader-esp-idf = "0.1.0"
+esp-bootloader-esp-idf = { version = "0.2.0", features = ["esp-rom-sys"] }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -69,6 +69,7 @@ esp32 = [
     "esp-hal-embassy/esp32",
     "esp-println/esp32",
     "esp-backtrace/esp32",
+    "esp-bootloader-esp-idf/esp32",
     "foa/esp32",
     "foa_sta/esp32",
     "foa_awdl/esp32",
@@ -77,6 +78,7 @@ esp32s2 = [
     "esp-hal/esp32s2",
     "esp-hal-embassy/esp32s2",
     "esp-println/esp32s2",
+    "esp-bootloader-esp-idf/esp32s2",
     "esp-backtrace/esp32s2",
     "foa/esp32s2",
     "foa_sta/esp32s2",

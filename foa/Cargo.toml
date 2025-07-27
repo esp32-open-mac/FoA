@@ -7,12 +7,12 @@ edition = "2024"
 embassy-sync = "0.7.0"
 embassy-futures = "0.1.1"
 
-esp-hal = "1.0.0-beta.1"
-esp-wifi-hal = "0.1.3"
-static_cell = "2.1.0"
+esp-hal = "=1.0.0-rc.0"
+esp-wifi-hal = "=0.1.5"
+static_cell = "2.1.1"
 critical-section = "1.2.0"
 portable-atomic = "1.11.1"
-esp-config = "0.4.0"
+esp-config = "0.5.0"
 defmt-or-log = { version = "0.2.1", default-features = false }
 defmt = { version = "1.0.1", optional = true }
 embassy-time = "0.4.0"
@@ -20,7 +20,7 @@ heapless = "0.8.0"
 ieee80211 = "0.5.7"
 
 [build-dependencies]
-esp-config = { version = "0.4.0", features = ["build"] }
+esp-config = { version = "0.5.0", features = ["build"] }
 
 [features]
 arc_buffers = []

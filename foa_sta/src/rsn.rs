@@ -289,6 +289,7 @@ impl<'foa> CryptoState<'foa> {
                 KeyType::Pairwise,
             )
         };
+        debug!("TK: {:02x}", tk);
         key_slot
             .set_key(
                 key_id,

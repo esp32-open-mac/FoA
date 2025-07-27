@@ -33,7 +33,6 @@ async fn main(_spawner: Spawner) {
     let ([mut sta_vif, ..], mut foa_runner) = foa::init(
         stack_resources,
         peripherals.WIFI,
-        peripherals.RADIO_CLK,
         peripherals.ADC2,
     );
     let sta_resources = mk_static!(StaResources, StaResources::default());
