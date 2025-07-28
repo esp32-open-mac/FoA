@@ -1,5 +1,6 @@
-use core::marker::PhantomData;
+use core::{marker::PhantomData, num};
 
+use defmt::println;
 use defmt_or_log::debug;
 use embassy_futures::select::{Either3, select3};
 use embassy_net_driver_channel::StateRunner as NetStateRunner;
@@ -79,7 +80,20 @@ pub struct MeshManagementRunner<'foa, 'vif, Rng: RngCore + Copy> {
 }
 
 impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
-    fn generate_own_mesh_configuration_element() -> MeshConfigurationElement {
+    fn generate_own_mesh_configuration_element(&self) -> MeshConfigurationElement {
+        let num_peerings = self.common_resources.lock_peer_list(|peer_list| {
+            peer_list
+                .iter()
+                .map(|(_, state)| match state.mpm_state {
+                    MPMFSMState::Estab { .. } => 1,
+                    _ => 0,
+                })
+                .sum()
+        });
+        let accept_additional_peerings = self
+            .common_resources
+            .lock_peer_list(|peer_list| peer_list.capacity() - peer_list.len() > 0);
+
         MeshConfigurationElement {
             active_path_selection_protocol_identifier:
                 MeshConfigurationActivePathSelectionProtocolIdentifier::HWMP,
@@ -92,16 +106,16 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             authentication_protocol_identifier:
                 MeshConfigurationAuthenticationProtocolIdentifier::NoAuthentication,
             mesh_formation_info: MeshFormationInfo::new()
-                .with_connected_to_mesh_gate(false) // TODO fill this in once we have it
-                .with_num_peerings(0) // TODO fill this in
+                .with_connected_to_mesh_gate(false) // TODO fill this in once we can actually connect to mesh gate
+                .with_num_peerings(num_peerings)
                 .with_connected_to_as(false), // 'Connected to authentication system' is always false in open / SAE mesh
             mesh_capability: MeshCapability::new()
-                .with_accept_additional_mesh_peerings(true) // TODO fill this in
+                .with_accept_additional_mesh_peerings(accept_additional_peerings)
                 .with_forwarding(true),
         }
     }
 
-    fn does_mesh_sta_configuration_match(elements: ReadElements) -> bool {
+    fn does_mesh_sta_configuration_match(&self, elements: ReadElements) -> bool {
         // Check if mesh profile is equal
         if (elements
             .get_first_element::<MeshIDElement>()
@@ -116,7 +130,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             debug!("no mesh configuration element");
             return false;
         };
-        let own_config_element = Self::generate_own_mesh_configuration_element();
+        let own_config_element = self.generate_own_mesh_configuration_element();
         if peer_config_element.active_path_selection_metric_identifier
             != own_config_element.active_path_selection_metric_identifier
             || peer_config_element.active_path_selection_protocol_identifier
@@ -180,12 +194,12 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     TIMElement {
                         dtim_count: 1, // TODO oscillate this
                         dtim_period: 2,
-                        bitmap: None::<TIMBitmap<&[u8]>>, // TODO fill this in
+                        bitmap: None::<TIMBitmap<&[u8]>>, // TODO fill this in once we implement data traffic
                         _phantom: PhantomData
                     },
                     DEFAULT_XRATES,
                     mesh_id!(MESH_ID),
-                    Self::generate_own_mesh_configuration_element()
+                    self.generate_own_mesh_configuration_element()
 
                 },
                 _phantom: PhantomData,
@@ -231,7 +245,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     DEFAULT_SUPPORTED_RATES,
                     DEFAULT_XRATES,
                     mesh_id!(MESH_ID),
-                    Self::generate_own_mesh_configuration_element(),
+                    self.generate_own_mesh_configuration_element(),
                     MeshPeeringManagement::new_confirm(
                         MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
                         local_link_id, peer_link_id,
@@ -277,7 +291,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     DEFAULT_SUPPORTED_RATES,
                     DEFAULT_XRATES,
                     mesh_id!(MESH_ID),
-                    Self::generate_own_mesh_configuration_element(),
+                    self.generate_own_mesh_configuration_element(),
                     MeshPeeringManagement::new_open(
                         MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
                         local_link_id,
@@ -399,7 +413,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .get_first_element::<MeshPeeringManagement>()?
             .parse_as_open()?
             .local_link_id;
-        if Self::does_mesh_sta_configuration_match(mesh_peering_open_frame.elements) {
+        if self.does_mesh_sta_configuration_match(mesh_peering_open_frame.elements) {
             // check that we still have space left for an extra association
             let peer = {
                 self.common_resources
@@ -575,13 +589,13 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .get_first_element::<MeshPeeringManagement>()?
             .parse_as_confirm()?;
         let remote_aid = mesh_peering_confirm_frame.association_id;
-        if !Self::does_mesh_sta_configuration_match(mesh_peering_confirm_frame.elements) {
+        if !self.does_mesh_sta_configuration_match(mesh_peering_confirm_frame.elements) {
             self.send_mesh_peering_close(
                 our_address,
                 &addr,
                 mpm.peer_link_id.unwrap_or(0),
                 Some(mpm.local_link_id),
-                IEEE80211Reason::Unspecified, // TODO should be MESH-INCONSISTENT-PARAMETERS.
+                IEEE80211Reason::MeshInconsistentParameters,
             )
             .await;
             return None;
@@ -669,6 +683,76 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         None
     }
 
+    async fn process_mesh_peering_close(
+        &mut self,
+        mesh_peering_close_frame: &MeshPeeringCloseFrame<'_>,
+        our_address: &MACAddress,
+    ) -> Option<()> {
+        let addr = mesh_peering_close_frame.header.transmitter_address;
+        let mpm = mesh_peering_close_frame
+            .body
+            .elements
+            .get_first_element::<MeshPeeringManagement>()?
+            .parse_as_close()?;
+        if !self.does_mesh_sta_configuration_match(mesh_peering_close_frame.elements) {
+            // Let's not send a close frame, to avoid getting in an infinite loop
+            return None;
+        }
+        let peer = {
+            self.common_resources
+                .lock_peer_list(|peer_list| (peer_list.get(&addr).cloned()))
+        };
+        let Some(peer) = peer else {
+            // We don't know about this peer; let's not send a close frame (to avoid getting into infinite loop)
+            return None;
+        };
+        match peer.mpm_state {
+            MPMFSMState::Holding { mac_addr, .. } => {
+                // delete from peer list
+                self.common_resources.lock_peer_list(|mut peer_list| {
+                    peer_list.remove(&mac_addr);
+                });
+            }
+            MPMFSMState::Setup {
+                mac_addr,
+                local_link_id,
+                ..
+            }
+            | MPMFSMState::Estab {
+                mac_addr,
+                local_link_id,
+                ..
+            } => {
+                self.common_resources.lock_peer_list(|mut peer_list| {
+                    let _ = peer_list.modify_or_add_peer(
+                        &addr,
+                        |peer| {
+                            peer.mpm_state = MPMFSMState::Holding {
+                                mac_addr: mac_addr,
+                                local_link_id: mpm.peer_link_id.unwrap_or(local_link_id),
+                                peer_link_id: Some(mpm.local_link_id),
+                            };
+                        },
+                        || None,
+                    );
+                });
+                self.send_mesh_peering_close(
+                    our_address,
+                    &addr,
+                    local_link_id,
+                    Some(mpm.local_link_id),
+                    IEEE80211Reason::Unspecified, // TODO correct error code
+                )
+                .await;
+            }
+            MPMFSMState::Idle => {
+                // Should not happen normally
+                return None;
+            }
+        }
+        None
+    }
+
     pub async fn run(&mut self, our_address: &MACAddress) -> ! {
         let mut beacon_ticker = Ticker::every(Duration::from_micros(
             BEACON_INTERVAL_TU * TU.as_micros() as u64,
@@ -694,6 +778,9 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         }
                         mesh_peering_confirm_frame = MeshPeeringConfirmFrame => {
                             self.process_mesh_peering_confirm(&mesh_peering_confirm_frame, our_address).await;
+                        }
+                        mesh_peering_close_frame = MeshPeeringCloseFrame => {
+                            self.process_mesh_peering_close(&mesh_peering_close_frame, our_address).await;
                         }
                     };
                 }
