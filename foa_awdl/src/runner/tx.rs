@@ -11,9 +11,9 @@ use foa::{
 };
 use ieee80211::{data_frame::builder::DataFrameBuilder, mac_parser::MACAddress, scroll::Pwrite};
 use llc_rs::SnapLlcFrame;
-use smoltcp::wire::{
-    EthernetFrame, EthernetProtocol, Icmpv6Message, Icmpv6Packet, IpProtocol, Ipv6Packet,
-};
+use smoltcp::wire::EthernetFrame;
+#[cfg(feature = "ndp-inject")]
+use smoltcp::wire::{EthernetProtocol, Icmpv6Message, Icmpv6Packet, IpProtocol, Ipv6Packet};
 
 use crate::{peer::OverlapSlotState, state::CommonResources, APPLE_OUI, AWDL_BSSID, AWDL_MTU};
 
@@ -24,7 +24,8 @@ pub struct AwdlMsduTxRunner<'foa, 'vif> {
     pub common_resources: &'vif CommonResources,
 }
 impl AwdlMsduTxRunner<'_, '_> {
-    fn find_ndp_solicit(ipv6_payload: &[u8]) -> Option<MACAddress> {
+    #[cfg(feature = "ndp-inject")]
+    fn find_ndp_solicit(ipv6_payload: &[u8]) -> Option<[u8; 6]> {
         let ipv6_packet = Ipv6Packet::new_checked(ipv6_payload).ok()?;
         if ipv6_packet.next_header() != IpProtocol::Icmpv6 {
             return None;
@@ -45,6 +46,7 @@ impl AwdlMsduTxRunner<'_, '_> {
         let Ok(mut ethernet_frame) = EthernetFrame::new_checked(msdu_buffer) else {
             return;
         };
+        #[cfg(feature = "ndp-inject")]
         if ethernet_frame.ethertype() == EthernetProtocol::Ipv6 {
             if let Some(peer_address) = Self::find_ndp_solicit(ethernet_frame.payload_mut()) {
                 common_resources.ndp_inject_signal.signal(peer_address);
@@ -99,7 +101,7 @@ impl AwdlMsduTxRunner<'_, '_> {
                     },
                     _phantom: PhantomData,
                 })
-                .bssid(AWDL_BSSID)
+                .bssid(AWDL_BSSID.into())
                 .source_address(source_address)
                 .destination_address(destination_address)
                 .build(),

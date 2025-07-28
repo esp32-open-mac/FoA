@@ -34,13 +34,15 @@
 //! the interface with [AwdlControl::start]. Once the interface is running, you can receive events
 //! from the event queue, which report status changes from the interface.
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 use core::net::Ipv6Addr;
 
 use embassy_net_driver_channel::driver::HardwareAddress;
 use embassy_sync::channel::DynamicReceiver;
 use esp_config::esp_config_int;
 use foa::{esp_wifi_hal::RxFilterBank, VirtualInterface};
-use ieee80211::mac_parser::MACAddress;
 use rand_core::RngCore;
 
 mod control;
@@ -52,7 +54,7 @@ mod state;
 
 pub use {control::AwdlControl, event::AwdlEvent, runner::AwdlRunner, state::AwdlResources};
 
-const AWDL_BSSID: MACAddress = MACAddress::new([0x00, 0x25, 0x00, 0xff, 0x94, 0x73]);
+const AWDL_BSSID: [u8; 6] = [0x00, 0x25, 0x00, 0xff, 0x94, 0x73];
 const APPLE_OUI: [u8; 3] = [0x00, 0x17, 0xf2];
 
 pub(crate) const PEER_CACHE_SIZE: usize = esp_config_int!(usize, "FOA_AWDL_CONFIG_PEER_CACHE_SIZE");
@@ -90,7 +92,7 @@ pub fn new_awdl_interface<'foa, 'vif, Rng: RngCore + Clone>(
     virtual_interface.reset();
     let (interface_control, rx_queue) = virtual_interface.split();
 
-    interface_control.set_filter_parameters(RxFilterBank::BSSID, *AWDL_BSSID, None);
+    interface_control.set_filter_parameters(RxFilterBank::BSSID, AWDL_BSSID, None);
     interface_control.set_filter_status(RxFilterBank::BSSID, true);
 
     let (net_runner, net_device) = embassy_net_driver_channel::new(
@@ -104,7 +106,7 @@ pub fn new_awdl_interface<'foa, 'vif, Rng: RngCore + Clone>(
             rng,
             common_resources: &resources.common_resources,
             channel: 6,
-            mac_address: MACAddress::new(interface_control.get_factory_mac_for_interface()),
+            mac_address: interface_control.get_factory_mac_for_interface(),
         },
         AwdlRunner::new(
             interface_control,
@@ -130,14 +132,14 @@ pub fn hw_address_to_ipv6(address: &[u8; 6]) -> Ipv6Addr {
     )
 }
 /// Convert a link local IPv6 address to a MAC address.
-pub fn ipv6_to_hw_address(ipv6: &Ipv6Addr) -> MACAddress {
+pub fn ipv6_to_hw_address(ipv6: &Ipv6Addr) -> [u8; 6] {
     let ipv6 = ipv6.octets();
-    MACAddress::new([
+    [
         ipv6[8] ^ 0x2,
         ipv6[9],
         ipv6[10],
         ipv6[13],
         ipv6[14],
         ipv6[15],
-    ])
+    ]
 }

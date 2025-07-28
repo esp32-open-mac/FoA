@@ -21,14 +21,10 @@
 
 use core::cell::Cell;
 
+use connection_state::ConnectionStateTracker;
 use embassy_net::driver::HardwareAddress;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
-use embassy_time::Duration;
 use esp_config::esp_config_int;
-use ieee80211::{
-    common::{AssociationID, IEEE80211StatusCode},
-    mac_parser::MACAddress,
-};
+use ieee80211::{common::IEEE80211StatusCode, mac_parser::MACAddress};
 
 use embassy_net_driver_channel::{self as ch};
 use foa::{
@@ -41,6 +37,7 @@ extern crate defmt_or_log;
 
 mod control;
 pub use control::*;
+pub use operations::scan::BSS;
 
 mod runner;
 use rand_core::RngCore;
@@ -49,6 +46,8 @@ use runner::{ConnectionRunner, RoutingRunner};
 mod operations;
 mod rx_router;
 use rx_router::StaRxRouter;
+mod connection_state;
+pub use connection_state::ConnectionConfig;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,68 +79,7 @@ pub enum StaError {
     RouterOperationAlreadyInProgress,
 }
 
-pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
-
 pub const MTU: usize = 1514;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// Information about the current connection.
-pub(crate) struct ConnectionInfo {
-    /// The address of the BSS, we're connected to.
-    pub bssid: MACAddress,
-    /// Our own address.
-    pub own_address: MACAddress,
-    /// The association ID assigned by the AP.
-    pub aid: AssociationID,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// All possible conneciton states, that the STA can be in.
-pub(crate) enum ConnectionState {
-    Disconnected,
-    Connected(ConnectionInfo),
-}
-/// Tracks the connection state.
-pub(crate) struct ConnectionStateTracker {
-    connection_state: Cell<ConnectionState>,
-    connection_state_signal: Signal<NoopRawMutex, ()>,
-}
-impl ConnectionStateTracker {
-    /// Create a new state tracker.
-    pub const fn new() -> Self {
-        Self {
-            connection_state: Cell::new(ConnectionState::Disconnected),
-            connection_state_signal: Signal::new(),
-        }
-    }
-    /// Signal a new state.
-    pub fn signal_state(&self, new_state: ConnectionState) {
-        self.connection_state.set(new_state);
-        self.connection_state_signal.signal(());
-    }
-    /// Get the connection info.
-    pub fn connection_info(&self) -> Option<ConnectionInfo> {
-        match self.connection_state.get() {
-            ConnectionState::Connected(connection_info) => Some(connection_info),
-            ConnectionState::Disconnected => None,
-        }
-    }
-    /// Wait for a connected state to be signaled.
-    pub async fn wait_for_connection(&self) -> ConnectionInfo {
-        loop {
-            let ConnectionState::Connected(connection_info) = self.connection_state.get() else {
-                self.connection_state_signal.wait().await;
-                continue;
-            };
-            break connection_info;
-        }
-    }
-    /// Wait for a disconnected state to be signaled.
-    pub async fn wait_for_disconnection(&self) {
-        while matches!(self.connection_state.get(), ConnectionState::Connected(_)) {
-            self.connection_state_signal.wait().await
-        }
-    }
-}
 
 #[derive(Clone)]
 /// TX and RX resources for the interface control and runner.

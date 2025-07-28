@@ -7,8 +7,12 @@ pub enum AwdlEvent {
     PeerDiscovered([u8; 6]),
     /// A peer went stale and was evicted from the cache.
     ///
-    /// The parameter is the address.
-    PeerWentStale([u8; 6]),
+    /// The ports are the last known values for that peer.
+    PeerWentStale {
+        address: [u8; 6],
+        airdrop_port: Option<u16>,
+        airplay_port: Option<u16>,
+    },
     /// The services offered by a peer were discovered.
     ///
     /// This is as much service discovery as is currently possible.

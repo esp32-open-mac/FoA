@@ -10,7 +10,7 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 
 use esp_alloc::heap_allocator;
 use esp_backtrace as _;
@@ -118,10 +118,7 @@ async fn main(spawner: Spawner) {
     join_array(stas.map(|(mut sta_control, sta_net_device)| {
         let bss = bss.clone();
         async move {
-            sta_control
-                .connect(&bss, Some(Duration::from_secs(1)))
-                .await
-                .unwrap();
+            sta_control.connect(bss, None).await.unwrap();
             run_net_stack(&spawner, sta_net_device).await;
         }
     }))

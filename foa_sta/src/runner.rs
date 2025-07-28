@@ -25,9 +25,15 @@ use ieee80211::{
 use llc_rs::SnapLlcFrame;
 
 use crate::{
+    connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason},
+    operations::{self, connect::ConnectionParameters},
     rx_router::{StaRxRouterEndpoint, StaRxRouterInput, StaRxRouterOperation},
-    ConnectionInfo, ConnectionState, ConnectionStateTracker, StaTxRx, MTU,
+    ConnectionStateTracker, StaTxRx, MTU,
 };
+enum ConnectionRxEvent {
+    Disconnected(DisconnectionReason),
+    BeaconReceived,
+}
 pub(crate) struct ConnectionRunner<'foa, 'vif> {
     // Low level RX/TX.
     pub(crate) rx_router_endpoint: StaRxRouterEndpoint<'foa, 'vif>,
@@ -37,43 +43,38 @@ pub(crate) struct ConnectionRunner<'foa, 'vif> {
     pub(crate) state_runner: StateRunner<'vif>,
 }
 impl ConnectionRunner<'_, '_> {
-    /// Set the internal state to disconnected.
-    fn set_disconnected(&self) {
-        self.sta_tx_rx.interface_control.unlock_channel();
-        self.sta_tx_rx
-            .connection_state
-            .signal_state(ConnectionState::Disconnected);
-        self.sta_tx_rx.reset_phy_rate();
-    }
     /// Handle a deauth frame.
     ///
     /// NOTE: Currently this immediately leads to disconnection.
-    fn handle_deauth(&self, deauth: DeauthenticationFrame<'_>) {
+    fn handle_deauth(&self, deauth: DeauthenticationFrame<'_>) -> ConnectionRxEvent {
         debug!(
             "Received deauthentication frame from {}, reason: {:?}.",
             deauth.header.transmitter_address, deauth.reason
         );
-        self.set_disconnected();
+        ConnectionRxEvent::Disconnected(DisconnectionReason::Deauthenticated)
     }
     /// Handle a frame arriving on the background queue, during a connection.
-    fn handle_bg_rx(&self, buffer: ReceivedFrame<'_>, beacon_timeout: &mut Ticker) {
-        let _ = match_frames! {
+    fn handle_bg_rx(&self, buffer: ReceivedFrame<'_>) -> Option<ConnectionRxEvent> {
+        match_frames! {
             buffer.mpdu_buffer(),
             deauth = DeauthenticationFrame => {
-                self.handle_deauth(deauth);
+                self.handle_deauth(deauth)
             }
             _beacon = BeaconFrame => {
-                beacon_timeout.reset();
+                ConnectionRxEvent::BeaconReceived
             }
-        };
+        }
+        .ok()
     }
-    /// Run the background task, while connected.
+    /// Run the background task.
+    ///
+    /// This will return if we are deauthenticated or a beacon timeout occurs.
     async fn run_connection(
         &self,
         ConnectionInfo {
-            bssid, own_address, ..
-        }: ConnectionInfo,
-    ) {
+            bss, own_address, ..
+        }: &ConnectionInfo,
+    ) -> DisconnectionReason {
         let mut beacon_timeout = Ticker::every(Duration::from_secs(3));
         loop {
             // We wait for one of three things to happen.
@@ -92,28 +93,44 @@ impl ConnectionRunner<'_, '_> {
             {
                 Either3::First(off_channel_request) => {
                     off_channel_request.grant();
+                    self.sta_tx_rx
+                        .interface_control
+                        .wait_for_off_channel_completion()
+                        .await;
                 }
-                Either3::Second(buffer) => self.handle_bg_rx(buffer, &mut beacon_timeout),
+                Either3::Second(buffer) => {
+                    if let Some(connection_rx_event) = self.handle_bg_rx(buffer) {
+                        match connection_rx_event {
+                            ConnectionRxEvent::Disconnected(disconnection_reason) => {
+                                return disconnection_reason
+                            }
+                            ConnectionRxEvent::BeaconReceived => beacon_timeout.reset(),
+                        }
+                    }
+                }
                 Either3::Third(_) => {
-                    // Since we assume the network either can't or barely hear us, we use the
+                    // Since we assume the network can either not or barely hear us, we use the
                     // lowest PHY rate.
                     deauthenticate(
                         self.sta_tx_rx.interface_control,
-                        bssid,
-                        own_address,
+                        bss.bssid,
+                        *own_address,
                         true,
                         WiFiRate::PhyRate1ML,
                     )
                     .await;
-                    self.set_disconnected();
                     debug!("Disconnected from BSS due to beacon timeout.");
-                    return;
+                    return DisconnectionReason::BeaconTimeout;
                 }
             }
         }
     }
     /// Handle the tranmsission of MSDUs.
-    async fn run_msdu_tx(tx_runner: &mut TxRunner<'_, MTU>, sta_tx_rx: &StaTxRx<'_, '_>) -> ! {
+    async fn run_msdu_tx(
+        tx_runner: &mut TxRunner<'_, MTU>,
+        sta_tx_rx: &StaTxRx<'_, '_>,
+        connection_info: &ConnectionInfo,
+    ) -> ! {
         loop {
             let msdu = tx_runner.tx_buf().await;
             // We don't want to accidentally transmit a MSDU, while we're not on channel.
@@ -121,9 +138,6 @@ impl ConnectionRunner<'_, '_> {
                 .interface_control
                 .wait_for_off_channel_completion()
                 .await;
-            let Some(connection_info) = sta_tx_rx.connection_state.connection_info() else {
-                continue;
-            };
             let Ok(ethernet_frame) = msdu.pread::<Ethernet2Frame>(0) else {
                 continue;
             };
@@ -132,7 +146,7 @@ impl ConnectionRunner<'_, '_> {
                 header: DataFrameHeader {
                     subtype: DataFrameSubtype::Data,
                     fcf_flags: FCFFlags::new().with_to_ds(true),
-                    address_1: connection_info.bssid,
+                    address_1: connection_info.bss.bssid,
                     address_2: connection_info.own_address,
                     address_3: ethernet_frame.header.dst,
                     sequence_control: SequenceControl::new(),
@@ -171,7 +185,7 @@ impl ConnectionRunner<'_, '_> {
     /// Run all actual background operations.
     async fn run(&mut self, tx_runner: &mut TxRunner<'_, MTU>) -> ! {
         loop {
-            let connection_info = self.sta_tx_rx.connection_state.wait_for_connection().await;
+            let mut connection_info = self.sta_tx_rx.connection_state.wait_for_connection().await;
             self.state_runner
                 .set_hardware_address(HardwareAddress::Ethernet(*connection_info.own_address));
             self.state_runner.set_link_state(LinkState::Up);
@@ -179,19 +193,58 @@ impl ConnectionRunner<'_, '_> {
             // At this point, the channel will have been locked, so we'll only receive off channel
             // requests, while we're connected.
 
-            // Run the connection, until we're disconnected.
-            select3(
-                self.sta_tx_rx.connection_state.wait_for_disconnection(),
-                self.run_connection(connection_info),
-                Self::run_msdu_tx(tx_runner, self.sta_tx_rx),
-            )
-            .await;
+            let disconnection_reason = loop {
+                // Run the connection, until we're disconnected.
+                let disconnection_reason = match select3(
+                    self.sta_tx_rx.connection_state.wait_for_disconnection(),
+                    self.run_connection(&connection_info),
+                    Self::run_msdu_tx(tx_runner, self.sta_tx_rx, &connection_info),
+                )
+                .await
+                {
+                    Either3::First(disconnection_reason)
+                    | Either3::Second(disconnection_reason) => disconnection_reason,
+                    Either3::Third(_) => unreachable!(),
+                };
+                if disconnection_reason == DisconnectionReason::User
+                    || !connection_info.connection_config.automatic_reconnect
+                {
+                    break disconnection_reason;
+                }
+                let res = operations::connect::connect(
+                    self.sta_tx_rx,
+                    &mut self.rx_router_endpoint,
+                    &connection_info.bss,
+                    &ConnectionParameters {
+                        config: connection_info.connection_config,
+                        own_address: connection_info.own_address,
+                        phy_rate: WiFiRate::PhyRate1ML,
+                    },
+                )
+                .await;
+                if let Ok(new_aid) = res {
+                    connection_info.aid = new_aid;
+                    debug!(
+                        "Reconnected to {}. Got AID: {}.",
+                        connection_info.bss.bssid, new_aid
+                    );
+                } else {
+                    debug!("Failed to reconnect to {}.", connection_info.bss.bssid);
+                    break disconnection_reason;
+                }
+            };
 
             // We reset all connection specific parameters here.
             // Unlocking the channel was already done, by any path leading to disconnection.
+            self.sta_tx_rx.interface_control.unlock_channel();
+            self.sta_tx_rx.reset_phy_rate();
             self.sta_tx_rx
                 .interface_control
                 .set_filter_status(RxFilterBank::BSSID, false);
+            self.sta_tx_rx
+                .connection_state
+                .signal_state(ConnectionState::Disconnected(disconnection_reason));
+            self.state_runner.set_link_state(LinkState::Down);
             debug!("Link went down.");
         }
     }

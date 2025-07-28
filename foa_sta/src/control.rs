@@ -1,12 +1,6 @@
 //! This module provides control over the STA interface.
 
-use embassy_time::Duration;
-use ieee80211::{
-    common::AssociationID,
-    elements::DSSSParameterSetElement,
-    mac_parser::MACAddress,
-    mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
-};
+use ieee80211::{common::AssociationID, mac_parser::MACAddress};
 
 use foa::{
     esp_wifi_hal::WiFiRate,
@@ -15,45 +9,16 @@ use foa::{
 use rand_core::RngCore;
 
 use crate::{
+    connection_state::{ConnectionInfo, ConnectionState, DisconnectionReason},
     operations::{
         connect::{self, ConnectionParameters},
-        scan::{enumerate_bss, search_for_bss},
+        scan::{enumerate_bss, search_for_bss, BSS},
     },
     rx_router::StaRxRouterEndpoint,
-    ConnectionInfo, StaTxRx,
+    ConnectionConfig, StaTxRx,
 };
 
-use super::{ConnectionState, StaError, DEFAULT_TIMEOUT};
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// Information about a BSS.
-pub struct BSS {
-    pub ssid: heapless::String<32>,
-    pub channel: u8,
-    pub bssid: MACAddress,
-    pub last_rssi: i8,
-}
-impl BSS {
-    /// Create a [BSS] from the information in a beacon or probe response frame.
-    pub fn from_beacon_like<Subtype>(
-        frame: ManagementFrame<BeaconLikeBody<'_, Subtype>>,
-        rssi: i8,
-    ) -> Option<Self> {
-        let mut ssid = heapless::String::new();
-        let _ = ssid.push_str(frame.ssid()?);
-        let channel = frame
-            .elements
-            .get_first_element::<DSSSParameterSetElement>()?
-            .current_channel;
-        let bssid = frame.header.bssid;
-        Some(Self {
-            ssid,
-            channel,
-            bssid,
-            last_rssi: rssi,
-        })
-    }
-}
+use super::StaError;
 
 /// This provides control over the STA interface.
 pub struct StaControl<'foa, 'vif, Rng: RngCore> {
@@ -117,43 +82,44 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
         )
         .await
     }
-    /// Check if we're currently connected to a network.
-    pub fn is_connected(&self) -> bool {
-        self.sta_tx_rx.connection_state.connection_info().is_some()
-    }
     /// Connect to a network.
     ///
     /// If we're already connected to a network, this will disconnect from that network, before
     /// establishing a connection to the new network.
-    pub async fn connect(&mut self, bss: &BSS, timeout: Option<Duration>) -> Result<(), StaError> {
+    pub async fn connect(
+        &mut self,
+        bss: BSS,
+        connection_config: Option<ConnectionConfig>,
+    ) -> Result<(), StaError> {
         if let Some(connection_info) = self.sta_tx_rx.connection_state.connection_info() {
-            if connection_info.bssid == bss.bssid {
+            if connection_info.bss.bssid == bss.bssid {
                 return Err(StaError::SameNetwork);
             }
-            debug!("Disconnecting from {}.", connection_info.bssid);
-            self.disconnect_internal(connection_info).await;
+            debug!("Disconnecting from {}.", connection_info.bss.bssid);
+            self.disconnect_internal(&connection_info).await;
         }
         self.sta_tx_rx.reset_phy_rate();
+        let connection_config = connection_config.unwrap_or_default();
         let aid = connect::connect(
             self.sta_tx_rx,
             &mut self.rx_router_endpoint,
-            bss,
+            &bss,
             &ConnectionParameters {
                 phy_rate: self.sta_tx_rx.phy_rate(),
-                retries: 4,
-                timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
+                config: connection_config,
                 own_address: self.mac_address,
             },
         )
         .await?;
+        debug!("Successfully connected to {}", bss.bssid);
         self.sta_tx_rx
             .connection_state
             .signal_state(ConnectionState::Connected(ConnectionInfo {
-                bssid: bss.bssid,
+                bss,
                 own_address: self.mac_address,
                 aid,
+                connection_config,
             }));
-        debug!("Successfully connected to {}", bss.bssid);
         Ok(())
     }
     /// Connect to a network based on it's SSID.
@@ -162,28 +128,28 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
     pub async fn connect_by_ssid(
         &mut self,
         ssid: &str,
-        timeout: Option<Duration>,
+        connection_config: Option<ConnectionConfig>,
     ) -> Result<(), StaError> {
         let bss = self.find_ess(None, ssid).await?;
-        self.connect(&bss, timeout).await
+        self.connect(bss, connection_config).await
     }
     async fn disconnect_internal(
         &mut self,
         ConnectionInfo {
-            bssid, own_address, ..
-        }: ConnectionInfo,
+            bss, own_address, ..
+        }: &ConnectionInfo,
     ) {
         // NOTE: The channel is already unlocked here, but since there's no await-point between
         // unlocking the channel and transmitting the deauth, no other interface could attempt to
         // lock it before we're done here.
         self.sta_tx_rx
             .connection_state
-            .signal_state(ConnectionState::Disconnected);
+            .signal_state(ConnectionState::Disconnected(DisconnectionReason::User));
         self.sta_tx_rx.reset_phy_rate();
         deauthenticate(
             self.sta_tx_rx.interface_control,
-            bssid,
-            own_address,
+            bss.bssid,
+            *own_address,
             true,
             self.sta_tx_rx.phy_rate(),
         )
@@ -195,16 +161,19 @@ impl<Rng: RngCore> StaControl<'_, '_, Rng> {
             return Err(StaError::NotConnected);
         };
         self.sta_tx_rx.interface_control.unlock_channel();
-        self.disconnect_internal(connection_info).await;
-        debug!("Disconnected from {}", connection_info.bssid);
+        self.disconnect_internal(&connection_info).await;
+        debug!("Disconnected from {}", connection_info.bss.bssid);
         Ok(())
+    }
+    /// Check if we're currently connected to a network.
+    pub fn connected(&self) -> bool {
+        self.sta_tx_rx.connection_state.connected()
     }
     /// Get the [AssociationID] of the current connection.
     pub fn get_aid(&self) -> Option<AssociationID> {
         self.sta_tx_rx
             .connection_state
-            .connection_info()
-            .map(|connection_info| connection_info.aid)
+            .map_connection_info(|connection_info| connection_info.aid)
     }
     /// Get the currently used PHY rate.
     pub fn phy_rate(&self) -> WiFiRate {

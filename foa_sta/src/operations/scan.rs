@@ -1,6 +1,41 @@
 use foa::util::operations::{PostChannelScanAction, ScanConfig};
+use ieee80211::{
+    elements::DSSSParameterSetElement,
+    mac_parser::MACAddress,
+    mgmt_frame::{body::BeaconLikeBody, ManagementFrame},
+};
 
-use crate::{rx_router::StaRxRouterEndpoint, StaError, StaTxRx, BSS};
+use crate::{rx_router::StaRxRouterEndpoint, StaError, StaTxRx};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Information about a BSS.
+pub struct BSS {
+    pub ssid: heapless::String<32>,
+    pub channel: u8,
+    pub bssid: MACAddress,
+    pub last_rssi: i8,
+}
+impl BSS {
+    /// Create a [BSS] from the information in a beacon or probe response frame.
+    pub fn from_beacon_like<Subtype>(
+        frame: ManagementFrame<BeaconLikeBody<'_, Subtype>>,
+        rssi: i8,
+    ) -> Option<Self> {
+        let mut ssid = heapless::String::new();
+        let _ = ssid.push_str(frame.ssid()?);
+        let channel = frame
+            .elements
+            .get_first_element::<DSSSParameterSetElement>()?
+            .current_channel;
+        let bssid = frame.header.bssid;
+        Some(Self {
+            ssid,
+            channel,
+            bssid,
+            last_rssi: rssi,
+        })
+    }
+}
 /// Search for a BSS, with the specified [ScanConfig].
 ///
 /// This will return immediately when the first beacon with the specified SSID is received.
