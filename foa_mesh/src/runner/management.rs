@@ -1,8 +1,8 @@
 use core::{marker::PhantomData, num};
 
-use defmt::println;
+use defmt::{println, warn};
 use defmt_or_log::debug;
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_net_driver_channel::StateRunner as NetStateRunner;
 
 use foa::{
@@ -12,12 +12,12 @@ use foa::{
 use rand_core::RngCore;
 
 use crate::{
-    peer_state::MeshPeerList,
+    peer_state::{MeshPeerList, MeshPeerState},
     rx_router::MeshRxRouterEndpoint,
     state::{CommonResources, MPMFSMState, MPMFSMSubState},
 };
 
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use ieee80211::{
     common::{AssociationID, CapabilitiesInformation, IEEE80211Reason, TU},
     element_chain,
@@ -38,7 +38,7 @@ use ieee80211::{
     mac_parser::{BROADCAST, MACAddress},
     match_frames, mesh_id,
     mgmt_frame::{
-        BeaconFrame, ManagementFrameHeader,
+        BeaconFrame, ManagementFrameHeader, ProbeRequestFrame,
         body::{
             BeaconBody,
             action::{
@@ -70,6 +70,12 @@ const DEFAULT_XRATES: ExtendedSupportedRatesElement<[EncodedRate; 4]> =
 
 // TODO make this settable from the consumer of this library
 const MESH_ID: &str = "meshtest";
+
+const DOT11_MESH_RETRY_TIMEOUT_MS: u32 = 40;
+const DOT11_MESH_CONFIRM_TIMEOUT_MS: u32 = 40;
+const DOT11_MESH_HOLDING_TIMEOUT_MS: u32 = 40;
+
+const DOT11_MESH_MAX_RETRIES: u32 = 2;
 
 pub struct MeshManagementRunner<'foa, 'vif, Rng: RngCore + Copy> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
@@ -230,6 +236,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         local_link_id: u16,
         peer_link_id: u16,
     ) {
+        debug!("mesh peering confirm tx");
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let mesh_peering_confirm_frame = MeshPeeringConfirmFrame {
             header: ManagementFrameHeader {
@@ -277,6 +284,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         dst_address: &MACAddress,
         local_link_id: u16,
     ) {
+        debug!("mesh peering open tx");
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let mesh_peering_confirm_frame = MeshPeeringOpenFrame {
             header: ManagementFrameHeader {
@@ -325,6 +333,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         peer_link_id: Option<u16>,
         reason: IEEE80211Reason,
     ) {
+        debug!("tx mesh peering close");
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
         let mesh_peering_close_frame = MeshPeeringCloseFrame {
             header: ManagementFrameHeader {
@@ -406,6 +415,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         mesh_peering_open_frame: &MeshPeeringOpenFrame<'_>,
         our_address: &MACAddress,
     ) -> Option<()> {
+        debug!("mesh peering open rxd");
         let addr = mesh_peering_open_frame.header.transmitter_address;
         let peer_link_id = mesh_peering_open_frame
             .body
@@ -446,6 +456,10 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                     substate: MPMFSMSubState::OpnRcvd,
                                     local_aid: local_aid,
                                     remote_aid: None,
+                                    retry_timer_expiration: Instant::now()
+                                        + Duration::from_millis(DOT11_MESH_RETRY_TIMEOUT_MS.into()),
+                                    retry_counter: DOT11_MESH_MAX_RETRIES as u8,
+                                    confirm_timer_expiration: Instant::MAX,
                                 }
                             },
                             || None,
@@ -470,6 +484,9 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     substate,
                     local_aid,
                     remote_aid,
+                    retry_timer_expiration,
+                    retry_counter,
+                    confirm_timer_expiration,
                 } => match substate {
                     MPMFSMSubState::OpnSnt => {
                         self.common_resources.lock_peer_list(|mut peer_list| {
@@ -483,6 +500,9 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                         substate: MPMFSMSubState::OpnRcvd,
                                         local_aid,
                                         remote_aid,
+                                        retry_timer_expiration,
+                                        retry_counter,
+                                        confirm_timer_expiration,
                                     }
                                 },
                                 || None,
@@ -582,6 +602,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         mesh_peering_confirm_frame: &MeshPeeringConfirmFrame<'_>,
         our_address: &MACAddress,
     ) -> Option<()> {
+        debug!("mesh peering confirm");
         let addr = mesh_peering_confirm_frame.header.transmitter_address;
         let mpm = mesh_peering_confirm_frame
             .body
@@ -619,7 +640,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         };
 
         match peer.mpm_state {
-            MPMFSMState::Idle | MPMFSMState::Holding { .. } => {
+            MPMFSMState::Holding { .. } => {
                 self.send_mesh_peering_close(
                     our_address,
                     &addr,
@@ -629,7 +650,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 )
                 .await;
             }
-            MPMFSMState::Estab { .. } => {
+            MPMFSMState::Idle | MPMFSMState::Estab { .. } => {
                 // Ignore
             }
             MPMFSMState::Setup {
@@ -651,6 +672,12 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                     substate: MPMFSMSubState::CnfRcvd,
                                     local_aid: local_aid,
                                     remote_aid: Some(remote_aid),
+                                    retry_timer_expiration: Instant::MAX,
+                                    retry_counter: 0,
+                                    confirm_timer_expiration: Instant::now()
+                                        + Duration::from_millis(
+                                            DOT11_MESH_CONFIRM_TIMEOUT_MS.into(),
+                                        ),
                                 };
                             },
                             || None,
@@ -688,6 +715,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         mesh_peering_close_frame: &MeshPeeringCloseFrame<'_>,
         our_address: &MACAddress,
     ) -> Option<()> {
+        debug!("mesh peering close rxd");
         let addr = mesh_peering_close_frame.header.transmitter_address;
         let mpm = mesh_peering_close_frame
             .body
@@ -731,6 +759,8 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                 mac_addr: mac_addr,
                                 local_link_id: mpm.peer_link_id.unwrap_or(local_link_id),
                                 peer_link_id: Some(mpm.local_link_id),
+                                holding_timer_expiration: Instant::now()
+                                    + Duration::from_millis(DOT11_MESH_HOLDING_TIMEOUT_MS.into()),
                             };
                         },
                         || None,
@@ -753,25 +783,250 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         None
     }
 
+    async fn process_beacon_frame(
+        &mut self,
+        beacon_frame: &BeaconFrame<'_>,
+        our_address: &MACAddress,
+    ) -> Option<()> {
+        let peer_addr = beacon_frame.header.transmitter_address;
+        if !self.does_mesh_sta_configuration_match(beacon_frame.elements) {
+            return None;
+        }
+        debug!("rxd beacon");
+        let (known, free_space) = self.common_resources.lock_peer_list(|peer_list| {
+            (
+                peer_list.contains_key(&peer_addr),
+                peer_list.capacity() - peer_list.len() > 0,
+            )
+        });
+        if known || !free_space {
+            // We already know about this peer, currently no further actions need to be taken
+            return None;
+        }
+        let mesh_config_element = beacon_frame
+            .elements
+            .get_first_element::<MeshConfigurationElement>()?;
+        if !mesh_config_element
+            .mesh_capability
+            .accept_additional_mesh_peerings()
+        {
+            // Does not accept extra peerings, so also not ours
+            return None;
+        }
+        let local_link_id = self.generate_new_link_id();
+        // We now know about a peer, that we can pair with, so let's try to
+        // We checked earlier that the peer list should have free space, so we can ignore the result
+        let _ = self.common_resources.lock_peer_list(|mut peer_list| {
+            peer_list.insert(
+                peer_addr,
+                MeshPeerState {
+                    mpm_state: MPMFSMState::Setup {
+                        mac_addr: peer_addr,
+                        local_link_id: local_link_id,
+                        peer_link_id: 0,
+                        substate: MPMFSMSubState::OpnSnt,
+                        local_aid: self.common_resources.new_association_id(),
+                        remote_aid: None,
+                        retry_timer_expiration: Instant::now()
+                            + Duration::from_millis(DOT11_MESH_RETRY_TIMEOUT_MS.into()),
+                        retry_counter: DOT11_MESH_MAX_RETRIES as u8,
+                        confirm_timer_expiration: Instant::MAX,
+                    },
+                },
+            )
+        });
+        self.send_mesh_peering_open(our_address, &peer_addr, local_link_id)
+            .await;
+
+        return None;
+    }
+
+    async fn process_probe_request(
+        &mut self,
+        probe_request: &ProbeRequestFrame<'_>,
+        our_address: &MACAddress,
+    ) {
+        // TODO: respond with probe response, I guess
+        debug!("processing probe request");
+    }
+
+    async fn handle_timer_event(&mut self, our_address: &MACAddress) {
+        debug!("timer event!");
+        enum TimerEvent {
+            TOR1 {
+                destination: MACAddress,
+                local_link_id: u16,
+            },
+            TOR2 {
+                destination: MACAddress,
+                local_link_id: u16,
+                peer_link_id: Option<u16>,
+            },
+            TOC {
+                destination: MACAddress,
+                local_link_id: u16,
+                peer_link_id: Option<u16>,
+            },
+            TOH {
+                destination: MACAddress,
+            },
+        };
+        // A timer expired, so let's figure out which timers did in fact expire, and then set the next timer
+        let now = Instant::now();
+        let event = self.common_resources.lock_peer_list(|mut peer_list| {
+            for (mac, peer) in peer_list.iter_mut() {
+                debug!("peer = {}", peer);
+                match peer.mpm_state {
+                    MPMFSMState::Idle | MPMFSMState::Estab { .. } => (),
+                    MPMFSMState::Setup {
+                        ref mut retry_timer_expiration,
+                        ref mut retry_counter,
+                        ref mut confirm_timer_expiration,
+                        local_link_id,
+                        peer_link_id,
+                        ..
+                    } => {
+                        if *retry_timer_expiration <= now {
+                            debug!("retry {}", *retry_counter);
+                            if *retry_counter == 0 {
+                                peer.mpm_state = MPMFSMState::Holding {
+                                    mac_addr: *mac,
+                                    local_link_id: local_link_id,
+                                    peer_link_id: Some(peer_link_id),
+                                    holding_timer_expiration: now
+                                        + Duration::from_millis(
+                                            DOT11_MESH_HOLDING_TIMEOUT_MS.into(),
+                                        ),
+                                };
+                                return Some(TimerEvent::TOR2 {
+                                    destination: *mac,
+                                    local_link_id,
+                                    peer_link_id: Some(peer_link_id),
+                                });
+                            } else {
+                                *retry_counter -= 1;
+                                *retry_timer_expiration =
+                                    now + Duration::from_millis(DOT11_MESH_RETRY_TIMEOUT_MS.into());
+                                return Some(TimerEvent::TOR1 {
+                                    destination: *mac,
+                                    local_link_id,
+                                });
+                            }
+                        }
+                        if *confirm_timer_expiration <= now {
+                            debug!("confirm timer expiration");
+                            peer.mpm_state = MPMFSMState::Holding {
+                                mac_addr: *mac,
+                                local_link_id: local_link_id,
+                                peer_link_id: Some(peer_link_id),
+                                holding_timer_expiration: now
+                                    + Duration::from_millis(DOT11_MESH_HOLDING_TIMEOUT_MS.into()),
+                            };
+                            return Some(TimerEvent::TOC {
+                                destination: *mac,
+                                local_link_id,
+                                peer_link_id: Some(peer_link_id),
+                            });
+                        }
+                    }
+                    MPMFSMState::Holding {
+                        ref mut holding_timer_expiration,
+                        ..
+                    } => {
+                        if *holding_timer_expiration <= now {
+                            debug!("holding timer expiration");
+                            peer.mpm_state = MPMFSMState::Idle;
+                            return Some(TimerEvent::TOH { destination: *mac });
+                        }
+                    }
+                }
+            }
+            return None;
+        });
+        let Some(event) = event else {
+            let timer = self
+                .common_resources
+                .next_peer_timer_event
+                .lock(|cell| cell.borrow().clone());
+            warn!(
+                "timer expired, without timer event? {}ms (now={})",
+                timer.as_millis(),
+                Instant::now().as_millis()
+            );
+            return;
+        };
+        match event {
+            TimerEvent::TOR1 {
+                destination,
+                local_link_id,
+            } => {
+                debug!("TOR1");
+                self.send_mesh_peering_open(our_address, &destination, local_link_id)
+                    .await;
+            }
+            TimerEvent::TOR2 {
+                destination,
+                local_link_id,
+                peer_link_id,
+            } => {
+                debug!("TOR2");
+                self.send_mesh_peering_close(
+                    our_address,
+                    &destination,
+                    local_link_id,
+                    peer_link_id,
+                    IEEE80211Reason::MeshMaxRetries,
+                )
+                .await;
+            }
+            TimerEvent::TOC {
+                destination,
+                local_link_id,
+                peer_link_id,
+            } => {
+                debug!("TOC");
+                self.send_mesh_peering_close(
+                    our_address,
+                    &destination,
+                    local_link_id,
+                    peer_link_id,
+                    IEEE80211Reason::MeshConfirmTimeout,
+                )
+                .await;
+            }
+            TimerEvent::TOH { destination } => {
+                // Delete Idle from peer list to save space
+                debug!("TOH");
+                self.common_resources
+                    .lock_peer_list(|mut peer_list| peer_list.remove(&destination));
+            }
+        }
+    }
+
     pub async fn run(&mut self, our_address: &MACAddress) -> ! {
         let mut beacon_ticker = Ticker::every(Duration::from_micros(
             BEACON_INTERVAL_TU * TU.as_micros() as u64,
         ));
 
         loop {
-            match select3(
+            match select4(
                 self.interface_control.wait_for_off_channel_request(),
                 self.rx_router_endpoint.receive(),
                 beacon_ticker.next(),
+                Timer::at(
+                    self.common_resources
+                        .next_peer_timer_event
+                        .lock(|cell| cell.borrow().clone()),
+                ),
             )
             .await
             {
-                Either3::First(_off_channel_request) => {}
-                Either3::Second(buffer) => {
+                Either4::First(_off_channel_request) => {}
+                Either4::Second(buffer) => {
                     let _ = match_frames! {
                         buffer.mpdu_buffer(),
-                        _beacon_frame = BeaconFrame => {
-                            // TODO process beacon frames
+                        beacon_frame = BeaconFrame => {
+                            self.process_beacon_frame(&beacon_frame, our_address).await;
                         }
                         mesh_peering_open_frame = MeshPeeringOpenFrame => {
                             self.process_mesh_peering_open(&mesh_peering_open_frame, our_address).await;
@@ -782,11 +1037,17 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         mesh_peering_close_frame = MeshPeeringCloseFrame => {
                             self.process_mesh_peering_close(&mesh_peering_close_frame, our_address).await;
                         }
+                        probe_request = ProbeRequestFrame => {
+                            self.process_probe_request(&probe_request, our_address).await;
+                        }
                     };
                 }
-                Either3::Third(_) => {
+                Either4::Third(_) => {
                     // Time to send a beacon frame
                     self.send_beacon_frame(our_address).await;
+                }
+                Either4::Fourth(_) => {
+                    self.handle_timer_event(our_address).await;
                 }
             }
         }
