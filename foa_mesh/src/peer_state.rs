@@ -6,7 +6,7 @@ use ieee80211::{common::AssociationID, mac_parser::MACAddress};
 
 use crate::{MAX_NUM_PEERS, state::MPMFSMState};
 
-#[derive(Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, Copy)]
 #[derive_format_or_debug]
 pub(crate) struct MeshPeerState {
     pub(crate) mpm_state: MPMFSMState,

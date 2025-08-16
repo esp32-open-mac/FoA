@@ -23,6 +23,8 @@ impl MeshControl<'_, '_> {
         );
         self.interface_control
             .set_filter_status(RxFilterBank::ReceiverAddress, true);
+        self.interface_control
+            .set_scanning_mode(foa::esp_wifi_hal::ScanningMode::ManagementAndData);
     }
     /// Disable all filter for the interface.
     fn disable_filters(&self) {

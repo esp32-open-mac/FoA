@@ -1,9 +1,11 @@
 use core::cell::{Cell, RefCell, RefMut};
+use core::cmp;
 
 use defmt_or_log::derive_format_or_debug;
 use embassy_net_driver_channel::State as NetState;
 use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
+use embassy_time::Instant;
 use foa::util::rx_router::RxRouter;
 use ieee80211::common::AssociationID;
 use ieee80211::mac_parser::MACAddress;
@@ -38,7 +40,7 @@ pub enum MPMFSMSubState {
     OpnRcvd,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Default, Copy)]
+#[derive(Clone, PartialEq, Eq, Default, Copy)]
 #[derive_format_or_debug]
 pub enum MPMFSMState {
     #[default]
@@ -50,6 +52,9 @@ pub enum MPMFSMState {
         substate: MPMFSMSubState,
         local_aid: AssociationID,
         remote_aid: Option<AssociationID>,
+        retry_timer_expiration: Instant,
+        retry_counter: u8,
+        confirm_timer_expiration: Instant,
     },
     // Received Open and Confirm, also sent Open and Confirm
     Estab {
@@ -64,6 +69,7 @@ pub enum MPMFSMState {
         mac_addr: MACAddress,
         local_link_id: u16,
         peer_link_id: Option<u16>,
+        holding_timer_expiration: Instant,
     },
 }
 
@@ -104,6 +110,8 @@ pub struct CommonResources {
     pub(crate) peer_list: NoopMutex<RefCell<MeshPeerListImplementation>>,
 
     association_id_ctr: Cell<u16>,
+
+    pub(crate) next_peer_timer_event: NoopMutex<RefCell<Instant>>,
 }
 
 impl CommonResources {
@@ -113,18 +121,51 @@ impl CommonResources {
             dynamic_session_parameters: DynamicSessionParameters::new(),
             peer_list: NoopMutex::new(RefCell::new(MeshPeerListImplementation::UNINIT)),
             association_id_ctr: Cell::new(1),
+            next_peer_timer_event: NoopMutex::new(RefCell::new(Instant::MAX)),
         }
     }
     /// Initialize the parameters for a new session.
     pub fn initialize_session_parameters(&self, _channel: u8, _address: MACAddress) {
         // TODO use _channel and _address
     }
-    /// Acquire mutable access to the peer list in the closure.
+    /// Acquire mutable access to the peer list in the closure. Also updates the deadlines after.
     pub fn lock_peer_list<O>(
         &self,
         f: impl FnOnce(RefMut<'_, MeshPeerListImplementation>) -> O,
     ) -> O {
-        self.peer_list.lock(|peer_list| (f)(peer_list.borrow_mut()))
+        let (result, first_deadline) = self.peer_list.lock(|peer_list| {
+            let result = (f)(peer_list.borrow_mut());
+            // and recalculate timers
+            let mut first_deadline = Instant::MAX;
+            for (_, peer) in peer_list.borrow().iter() {
+                match peer.mpm_state {
+                    MPMFSMState::Idle => {}
+                    MPMFSMState::Estab { .. } => {}
+                    MPMFSMState::Holding {
+                        holding_timer_expiration,
+                        ..
+                    } => {
+                        first_deadline = cmp::min(first_deadline, holding_timer_expiration);
+                    }
+                    MPMFSMState::Setup {
+                        retry_timer_expiration,
+                        confirm_timer_expiration,
+                        ..
+                    } => {
+                        first_deadline = cmp::min(
+                            first_deadline,
+                            cmp::min(retry_timer_expiration, confirm_timer_expiration),
+                        )
+                    }
+                }
+            }
+
+            (result, first_deadline)
+        });
+        self.next_peer_timer_event
+            .lock(|cell| cell.replace(first_deadline));
+
+        result
     }
 
     pub fn new_association_id(&self) -> AssociationID {
