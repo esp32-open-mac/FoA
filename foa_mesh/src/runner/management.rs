@@ -22,7 +22,7 @@ use ieee80211::{
     common::{AssociationID, CapabilitiesInformation, IEEE80211Reason, TU},
     element_chain,
     elements::{
-        self, DSSSParameterSetElement, MeshIDElement, ReadElements,
+        self, DSSSParameterSetElement, MeshIDElement, ReadElements, SSIDElement,
         mesh::{
             MeshCapability, MeshConfigurationActivePathSelectionMetricIdentifier,
             MeshConfigurationActivePathSelectionProtocolIdentifier,
@@ -38,9 +38,9 @@ use ieee80211::{
     mac_parser::{BROADCAST, MACAddress},
     match_frames, mesh_id,
     mgmt_frame::{
-        BeaconFrame, ManagementFrameHeader, ProbeRequestFrame,
+        BeaconFrame, ManagementFrameHeader, ProbeRequestFrame, ProbeResponseFrame,
         body::{
-            BeaconBody,
+            BeaconBody, HasElements, ProbeResponseBody,
             action::{
                 MeshPeeringCloseBody, MeshPeeringCloseFrame, MeshPeeringConfirmBody,
                 MeshPeeringConfirmFrame, MeshPeeringOpenBody, MeshPeeringOpenFrame,
@@ -417,7 +417,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     ) -> Option<()> {
         debug!("mesh peering open rxd");
         let addr = mesh_peering_open_frame.header.transmitter_address;
-        let peer_link_id = mesh_peering_open_frame
+        let packet_peer_link_id = mesh_peering_open_frame
             .body
             .elements
             .get_first_element::<MeshPeeringManagement>()?
@@ -433,7 +433,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 self.send_mesh_peering_close(
                     our_address,
                     &addr,
-                    peer_link_id,
+                    packet_peer_link_id,
                     None,
                     IEEE80211Reason::Unspecified, // TODO correct error code
                 )
@@ -452,7 +452,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                 peer.mpm_state = MPMFSMState::Setup {
                                     mac_addr: addr,
                                     local_link_id: local_link_id,
-                                    peer_link_id: peer_link_id,
+                                    peer_link_id: packet_peer_link_id,
                                     substate: MPMFSMSubState::OpnRcvd,
                                     local_aid: local_aid,
                                     remote_aid: None,
@@ -471,7 +471,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         &addr,
                         local_aid,
                         local_link_id,
-                        peer_link_id,
+                        packet_peer_link_id,
                     )
                     .await;
                     self.send_mesh_peering_open(our_address, &addr, local_link_id)
@@ -496,7 +496,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                     peer.mpm_state = MPMFSMState::Setup {
                                         mac_addr,
                                         local_link_id,
-                                        peer_link_id,
+                                        peer_link_id: packet_peer_link_id,
                                         substate: MPMFSMSubState::OpnRcvd,
                                         local_aid,
                                         remote_aid,
@@ -513,7 +513,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                             &addr,
                             local_aid,
                             local_link_id,
-                            peer_link_id,
+                            packet_peer_link_id,
                         )
                         .await
                     }
@@ -525,7 +525,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                                     peer.mpm_state = MPMFSMState::Estab {
                                         mac_addr,
                                         local_link_id,
-                                        peer_link_id,
+                                        peer_link_id: packet_peer_link_id,
                                         local_aid,
                                         remote_aid: remote_aid.unwrap(),
                                     }
@@ -538,7 +538,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                             &addr,
                             local_aid,
                             local_link_id,
-                            peer_link_id,
+                            packet_peer_link_id,
                         )
                         .await;
                     }
@@ -548,7 +548,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                             &addr,
                             local_aid,
                             local_link_id,
-                            peer_link_id,
+                            packet_peer_link_id,
                         )
                         .await;
                     }
@@ -564,7 +564,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         &addr,
                         local_aid,
                         local_link_id,
-                        peer_link_id,
+                        packet_peer_link_id,
                     )
                     .await;
                 }
@@ -587,7 +587,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             self.send_mesh_peering_close(
                 our_address,
                 &addr,
-                peer_link_id,
+                packet_peer_link_id,
                 None,
                 IEEE80211Reason::Unspecified, // TODO correct error code
             )
@@ -845,9 +845,59 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         probe_request: &ProbeRequestFrame<'_>,
         our_address: &MACAddress,
-    ) {
-        // TODO: respond with probe response, I guess
+    ) -> Option<()> {
         debug!("processing probe request");
+        // Only process wildcard requests or mesh probe requests
+        if probe_request
+            .elements
+            .get_first_element::<SSIDElement>()?
+            .ssid()
+            != ""
+        {
+            return None;
+        }
+
+        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let probe_response = ProbeResponseFrame {
+            header: ManagementFrameHeader {
+                receiver_address: probe_request.header.transmitter_address,
+                transmitter_address: *our_address,
+                bssid: *our_address,
+                ..Default::default()
+            },
+            body: ProbeResponseBody {
+                timestamp: 0, // TODO let the hardware fill this in automatically
+                beacon_interval: BEACON_INTERVAL_TU as u16,
+                capabilities_info: CapabilitiesInformation::new(),
+                elements: element_chain! {
+                    ssid!(""), // wildcard SSID
+                    DEFAULT_SUPPORTED_RATES,
+                    DSSSParameterSetElement {
+                        current_channel: self.interface_control.home_channel().unwrap_or(1)
+                    },
+                    DEFAULT_XRATES,
+                    mesh_id!(MESH_ID),
+                    self.generate_own_mesh_configuration_element()
+                },
+                _phantom: PhantomData,
+            },
+        };
+
+        let written = tx_buffer.pwrite(probe_response, 0).unwrap();
+        let _ = self
+            .interface_control
+            .transmit(
+                &mut tx_buffer[..written],
+                &TxParameters {
+                    rate: WiFiRate::PhyRate12M,
+                    override_seq_num: true,
+                    tx_error_behaviour: TxErrorBehaviour::Drop,
+                    ..Default::default()
+                },
+                false,
+            )
+            .await;
+        None
     }
 
     async fn handle_timer_event(&mut self, our_address: &MACAddress) {
