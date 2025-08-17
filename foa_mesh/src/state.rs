@@ -169,12 +169,12 @@ impl CommonResources {
     }
 
     pub fn new_association_id(&self) -> AssociationID {
-        let counter = self.association_id_ctr.update(|counter| {
-            (counter + 1 % AssociationID::MAX_AID)
-                .clamp(AssociationID::MIN_AID, AssociationID::MAX_AID)
+        self.association_id_ctr.update(|counter| {
+            return (counter + 1 % AssociationID::MAX_AID)
+                .clamp(AssociationID::MIN_AID, AssociationID::MAX_AID);
         });
 
-        AssociationID::new_checked(counter).unwrap()
+        AssociationID::new_checked(self.association_id_ctr.get()).unwrap()
     }
 }
 

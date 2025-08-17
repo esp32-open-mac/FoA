@@ -8,8 +8,8 @@ use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
-use foa_mesh::state::MeshResources;
 use foa_mesh::MeshRunner;
+use foa_mesh::state::MeshResources;
 use heapless::String;
 
 macro_rules! mk_static {
@@ -41,12 +41,7 @@ async fn main(spawner: Spawner) {
     info!("After embassy!");
 
     let foa_resources = mk_static!(FoAResources, FoAResources::new());
-    let ([mesh_vif, ..], foa_runner) = foa::init(
-        foa_resources,
-        peripherals.WIFI,
-        peripherals.RADIO_CLK,
-        peripherals.ADC2,
-    );
+    let ([mesh_vif, ..], foa_runner) = foa::init(foa_resources, peripherals.WIFI, peripherals.ADC2);
     spawner.spawn(foa_task(foa_runner)).unwrap();
     let mesh_vif = mk_static!(VirtualInterface<'static>, mesh_vif);
     let mesh_resources = mk_static!(MeshResources, MeshResources::new());
