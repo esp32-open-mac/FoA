@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(cell_update)]
 
 mod control;
 pub mod peer_state;

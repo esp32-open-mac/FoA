@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use defmt_or_log::derive_format_or_debug;
 use heapless::FnvIndexMap;
-use ieee80211::{common::AssociationID, mac_parser::MACAddress};
+use ieee80211::mac_parser::MACAddress;
 
 use crate::{MAX_NUM_PEERS, state::MPMFSMState};
 
@@ -91,7 +91,7 @@ pub(crate) trait MeshPeerList:
         })
     }
 }
-pub type StaticMeshPeerList = FnvIndexMap<MACAddress, MeshPeerState, MAX_NUM_PEERS>;
+pub(crate) type StaticMeshPeerList = FnvIndexMap<MACAddress, MeshPeerState, MAX_NUM_PEERS>;
 impl MeshPeerList for StaticMeshPeerList {
     const UNINIT: Self = Self::new();
     fn get(&self, peer_address: &MACAddress) -> Option<&MeshPeerState> {

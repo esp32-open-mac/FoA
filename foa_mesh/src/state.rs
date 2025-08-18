@@ -31,7 +31,7 @@ pub(crate) enum MeshState {
 // I recommend looking at the figure, it's a lot clearer than the text
 #[derive(Clone, PartialEq, Eq, Hash, Copy)]
 #[derive_format_or_debug]
-pub enum MPMFSMSubState {
+pub(crate) enum MPMFSMSubState {
     // Open sent, but nothing received ye
     OpnSnt,
     // Received Confirm, but no Open yet => so also no Confirm sent yet
@@ -42,7 +42,7 @@ pub enum MPMFSMSubState {
 
 #[derive(Clone, PartialEq, Eq, Default, Copy)]
 #[derive_format_or_debug]
-pub enum MPMFSMState {
+pub(crate) enum MPMFSMState {
     #[default]
     Idle,
     Setup {

@@ -1,7 +1,7 @@
-use core::{marker::PhantomData, num};
+use core::marker::PhantomData;
 
-use defmt::{println, warn};
 use defmt_or_log::debug;
+use defmt_or_log::warn;
 use embassy_futures::select::{Either4, select4};
 use embassy_net_driver_channel::StateRunner as NetStateRunner;
 
@@ -22,7 +22,7 @@ use ieee80211::{
     common::{AssociationID, CapabilitiesInformation, IEEE80211Reason, TU},
     element_chain,
     elements::{
-        self, DSSSParameterSetElement, MeshIDElement, ReadElements, SSIDElement,
+        DSSSParameterSetElement, MeshIDElement, ReadElements, SSIDElement,
         mesh::{
             MeshCapability, MeshConfigurationActivePathSelectionMetricIdentifier,
             MeshConfigurationActivePathSelectionProtocolIdentifier,
@@ -40,7 +40,7 @@ use ieee80211::{
     mgmt_frame::{
         BeaconFrame, ManagementFrameHeader, ProbeRequestFrame, ProbeResponseFrame,
         body::{
-            BeaconBody, HasElements, ProbeResponseBody,
+            BeaconBody, ProbeResponseBody,
             action::{
                 MeshPeeringCloseBody, MeshPeeringCloseFrame, MeshPeeringConfirmBody,
                 MeshPeeringConfirmFrame, MeshPeeringOpenBody, MeshPeeringOpenFrame,
@@ -480,13 +480,13 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 MPMFSMState::Setup {
                     mac_addr,
                     local_link_id,
-                    peer_link_id,
                     substate,
                     local_aid,
                     remote_aid,
                     retry_timer_expiration,
                     retry_counter,
                     confirm_timer_expiration,
+                    ..
                 } => match substate {
                     MPMFSMSubState::OpnSnt => {
                         self.common_resources.lock_peer_list(|mut peer_list| {
@@ -555,7 +555,6 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 },
                 MPMFSMState::Estab {
                     local_link_id,
-                    peer_link_id,
                     local_aid,
                     ..
                 } => {
@@ -920,7 +919,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             TOH {
                 destination: MACAddress,
             },
-        };
+        }
         // A timer expired, so let's figure out which timers did in fact expire, and then set the next timer
         let now = Instant::now();
         let event = self.common_resources.lock_peer_list(|mut peer_list| {
