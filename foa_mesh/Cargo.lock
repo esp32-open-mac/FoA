@@ -249,6 +249,15 @@ checksum = "87c5c1460bfb0f719e899feab6ae532e5e0f059cdc85913bab8e6a0d7980245e"
 
 [[package]]
 name = "defmt"
+version = "0.3.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0963443817029b2024136fc4dd07a5107eb8f977eaf18fcd1fdeb11306b64ad"
+dependencies = [
+ "defmt 1.0.1",
+]
+
+[[package]]
+name = "defmt"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "548d977b6da32fa1d1fda2876453da1e7df63ad0304c8b3dae4dbe7b96f39b78"
@@ -276,7 +285,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4439fab1ae9faccf0f69cdf2671989ba40f246e178c7f87d6e4fd5270e53a979"
 dependencies = [
- "defmt",
+ "defmt 1.0.1",
  "defmt-or-log-macros",
  "log",
 ]
@@ -380,6 +389,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95285007a91b619dc9f26ea8f55452aa6c60f7115a4edc05085cd2bd3127cd7a"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "embassy-net-driver"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "524eb3c489760508f71360112bca70f6e53173e6fe48fc5f0efd0f5ab217751d"
+
+[[package]]
+name = "embassy-net-driver-channel"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25a567ab50319d866ad5e6c583ed665ba9b07865389644d3d82e45bf1497c934"
+dependencies = [
+ "embassy-futures",
+ "embassy-net-driver",
+ "embassy-sync 0.7.1",
 ]
 
 [[package]]
@@ -548,6 +574,15 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "esp-config"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "158dba334d3a2acd8d93873c0ae723ca1037cc78eefe5d6b4c5919b0ca28e38e"
+dependencies = [
+ "document-features",
+]
+
+[[package]]
+name = "esp-config"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd4a8db4b72794637a25944bc8d361c3cc271d4f03987ce8741312b6b61529c"
@@ -584,7 +619,7 @@ dependencies = [
  "embedded-io",
  "embedded-io-async",
  "enumset",
- "esp-config",
+ "esp-config 0.5.0",
  "esp-hal-procmacros",
  "esp-metadata-generated",
  "esp-riscv-rt",
@@ -696,7 +731,7 @@ dependencies = [
  "bitfield-struct",
  "cfg-if",
  "critical-section",
- "defmt",
+ "defmt 1.0.1",
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync 0.7.1",
@@ -705,7 +740,6 @@ dependencies = [
  "esp-wifi-sys",
  "esp32",
  "esp32s2",
- "log",
  "macro-bits",
  "portable-atomic",
  "static_cell",
@@ -800,6 +834,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethernet"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06a5436daf57432a98a6026008181a7c3e45d9eddfbe04efa044bf69049b7d90"
+dependencies = [
+ "ether-type",
+ "mac-parser",
+ "scroll",
+]
+
+[[package]]
 name = "evalexpr"
 version = "12.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -816,18 +861,37 @@ name = "foa"
 version = "0.1.0"
 dependencies = [
  "critical-section",
- "defmt",
+ "defmt 1.0.1",
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync 0.7.1",
  "embassy-time",
- "esp-config",
+ "esp-config 0.5.0",
  "esp-hal",
  "esp-wifi-hal",
  "heapless",
  "ieee80211",
  "portable-atomic",
  "static_cell",
+]
+
+[[package]]
+name = "foa_mesh"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "defmt-or-log",
+ "embassy-futures",
+ "embassy-net-driver-channel",
+ "embassy-sync 0.6.2",
+ "embassy-time",
+ "esp-config 0.3.1",
+ "ethernet",
+ "foa",
+ "heapless",
+ "ieee80211",
+ "llc-rs",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -941,7 +1005,7 @@ dependencies = [
  "bitfield-struct",
  "const_soft_float",
  "crc32fast",
- "defmt",
+ "defmt 1.0.1",
  "digest",
  "hmac",
  "llc-rs",
@@ -1038,7 +1102,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b31995b891e21d023d0e7732e8ea7634ca58101f1352b159eb64234824d899f8"
 dependencies = [
- "defmt",
+ "defmt 1.0.1",
  "scroll",
 ]
 

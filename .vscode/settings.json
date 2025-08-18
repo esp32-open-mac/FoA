@@ -1,8 +1,8 @@
 {
     "rust-analyzer.check.allTargets": false,
     "rust-analyzer.cargo.target": "xtensa-esp32-none-elf",
-    "editor.formatOnSave": true,
     "rust-analyzer.cargo.features": [
         "esp32"
     ],
+    "editor.formatOnSave": true
 }

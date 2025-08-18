@@ -34,6 +34,7 @@ embassy-executor = { version = "0.7.0", features = [
 foa = { path = "../foa", features = ["defmt"] }
 foa_sta = { path = "../foa_sta", features = ["defmt"] }
 foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
+foa_mesh = { path = "../foa_mesh", features = ["defmt"] }
 
 static_cell = "2.1.0"
 heapless = "0.8.0"
