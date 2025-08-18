@@ -435,7 +435,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     &addr,
                     packet_peer_link_id,
                     None,
-                    IEEE80211Reason::Unspecified, // TODO correct error code
+                    IEEE80211Reason::MeshMaxPeers,
                 )
                 .await;
                 return None;
@@ -577,7 +577,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         &addr,
                         local_link_id,
                         peer_link_id,
-                        IEEE80211Reason::Unspecified, // TODO correct error code
+                        IEEE80211Reason::Unspecified, // TODO what error code should we use? standard is unclear
                     )
                     .await;
                 }
@@ -588,7 +588,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 &addr,
                 packet_peer_link_id,
                 None,
-                IEEE80211Reason::Unspecified, // TODO correct error code
+                IEEE80211Reason::MeshInconsistentParameters,
             )
             .await;
         }
@@ -626,15 +626,8 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 .lock_peer_list(|mut peer_list| peer_list.get_or_create(&addr))
         };
         let Ok(peer) = peer else {
-            // Normally, we should be in a state where we know about the peer, so reject
-            self.send_mesh_peering_close(
-                our_address,
-                &addr,
-                mpm.peer_link_id.unwrap_or(0),
-                Some(mpm.local_link_id),
-                IEEE80211Reason::Unspecified, // TODO correct error code
-            )
-            .await;
+            // '''If the incoming frame is a Mesh Peering Confirm or Mesh Peering Close frame
+            // and no matching mesh peering instance is found, it shall be silently discarded.'''
             return None;
         };
 
@@ -645,7 +638,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     &addr,
                     mpm.peer_link_id.unwrap_or(0),
                     Some(mpm.local_link_id),
-                    IEEE80211Reason::Unspecified, // TODO correct error code
+                    IEEE80211Reason::Unspecified, // TODO what error code should we use? standard is unclear
                 )
                 .await;
             }
@@ -770,7 +763,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     &addr,
                     local_link_id,
                     Some(mpm.local_link_id),
-                    IEEE80211Reason::Unspecified, // TODO correct error code
+                    IEEE80211Reason::MeshCloseRcvd,
                 )
                 .await;
             }
