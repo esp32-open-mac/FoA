@@ -22,7 +22,11 @@ impl MeshControl<'_, '_> {
             None,
         );
         self.interface_control
+            .set_filter_parameters(RxFilterBank::BSSID, *self.mac_address, None);
+        self.interface_control
             .set_filter_status(RxFilterBank::ReceiverAddress, true);
+        self.interface_control
+            .set_filter_status(RxFilterBank::BSSID, true);
         self.interface_control
             .set_scanning_mode(foa::esp_wifi_hal::ScanningMode::ManagementAndData);
     }
@@ -30,6 +34,8 @@ impl MeshControl<'_, '_> {
     fn disable_filters(&self) {
         self.interface_control
             .set_filter_status(RxFilterBank::ReceiverAddress, false);
+        self.interface_control
+            .set_filter_status(RxFilterBank::BSSID, false);
     }
     /// Start a Mesh session.
     ///
