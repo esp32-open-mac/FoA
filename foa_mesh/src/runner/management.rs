@@ -68,8 +68,7 @@ const DEFAULT_SUPPORTED_RATES: SupportedRatesElement<[EncodedRate; 8]> = support
 const DEFAULT_XRATES: ExtendedSupportedRatesElement<[EncodedRate; 4]> =
     extended_supported_rates![24, 36, 48, 54];
 
-// TODO make this settable from the consumer of this library
-const MESH_ID: &str = "meshtest";
+type MeshIdStr = heapless::String<32>;
 
 const DOT11_MESH_RETRY_TIMEOUT_MS: u32 = 40;
 const DOT11_MESH_CONFIRM_TIMEOUT_MS: u32 = 40;
@@ -121,11 +120,15 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         }
     }
 
-    fn does_mesh_sta_configuration_match(&self, elements: ReadElements) -> bool {
+    fn does_mesh_sta_configuration_match(
+        &self,
+        mesh_id: &MeshIdStr,
+        elements: ReadElements,
+    ) -> bool {
         // Check if mesh profile is equal
         if (elements
             .get_first_element::<MeshIDElement>()
-            .map(|a| (a.ssid() != MESH_ID)))
+            .map(|a| (a.ssid() != mesh_id)))
         .unwrap_or(true)
         {
             return false;
@@ -174,7 +177,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         true
     }
 
-    pub async fn send_beacon_frame(&mut self, address: &MACAddress) {
+    pub async fn send_beacon_frame(&mut self, address: &MACAddress, mesh_id: &MeshIdStr) {
         let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
 
         // TODO this is currently only for 802.11bg, but not N
@@ -204,7 +207,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         _phantom: PhantomData
                     },
                     DEFAULT_XRATES,
-                    mesh_id!(MESH_ID),
+                    MeshIDElement::new(mesh_id).unwrap(),
                     self.generate_own_mesh_configuration_element()
 
                 },
@@ -231,6 +234,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     pub async fn send_mesh_peering_confirm(
         &mut self,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
         dst_address: &MACAddress,
         aid: AssociationID,
         local_link_id: u16,
@@ -251,7 +255,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 elements: element_chain! {
                     DEFAULT_SUPPORTED_RATES,
                     DEFAULT_XRATES,
-                    mesh_id!(MESH_ID),
+                    MeshIDElement::new(mesh_id).unwrap(),
                     self.generate_own_mesh_configuration_element(),
                     MeshPeeringManagement::new_confirm(
                         MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
@@ -281,6 +285,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     pub async fn send_mesh_peering_open(
         &mut self,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
         dst_address: &MACAddress,
         local_link_id: u16,
     ) {
@@ -298,7 +303,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 elements: element_chain! {
                     DEFAULT_SUPPORTED_RATES,
                     DEFAULT_XRATES,
-                    mesh_id!(MESH_ID),
+                    MeshIDElement::new(mesh_id).unwrap(),
                     self.generate_own_mesh_configuration_element(),
                     MeshPeeringManagement::new_open(
                         MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
@@ -328,6 +333,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     pub async fn send_mesh_peering_close(
         &mut self,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
         dst_address: &MACAddress,
         local_link_id: u16,
         peer_link_id: Option<u16>,
@@ -344,7 +350,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             },
             body: MeshPeeringCloseBody {
                 elements: element_chain! {
-                    mesh_id!(MESH_ID),
+                    MeshIDElement::new(mesh_id).unwrap(),
                     MeshPeeringManagement::new_close(
                         MeshPeeringProtocolIdentifier::MeshPeeringManagementProtocol,
                         local_link_id, peer_link_id,
@@ -414,6 +420,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         mesh_peering_open_frame: &MeshPeeringOpenFrame<'_>,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
     ) -> Option<()> {
         debug!("mesh peering open rxd");
         let addr = mesh_peering_open_frame.header.transmitter_address;
@@ -423,7 +430,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .get_first_element::<MeshPeeringManagement>()?
             .parse_as_open()?
             .local_link_id;
-        if self.does_mesh_sta_configuration_match(mesh_peering_open_frame.elements) {
+        if self.does_mesh_sta_configuration_match(mesh_id, mesh_peering_open_frame.elements) {
             // check that we still have space left for an extra association
             let peer = {
                 self.common_resources
@@ -432,6 +439,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             let Ok(peer) = peer else {
                 self.send_mesh_peering_close(
                     our_address,
+                    mesh_id,
                     &addr,
                     packet_peer_link_id,
                     None,
@@ -468,13 +476,14 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
 
                     self.send_mesh_peering_confirm(
                         our_address,
+                        mesh_id,
                         &addr,
                         local_aid,
                         local_link_id,
                         packet_peer_link_id,
                     )
                     .await;
-                    self.send_mesh_peering_open(our_address, &addr, local_link_id)
+                    self.send_mesh_peering_open(our_address, mesh_id, &addr, local_link_id)
                         .await;
                 }
                 MPMFSMState::Setup {
@@ -510,6 +519,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         });
                         self.send_mesh_peering_confirm(
                             our_address,
+                            mesh_id,
                             &addr,
                             local_aid,
                             local_link_id,
@@ -535,6 +545,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         });
                         self.send_mesh_peering_confirm(
                             our_address,
+                            mesh_id,
                             &addr,
                             local_aid,
                             local_link_id,
@@ -545,6 +556,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     MPMFSMSubState::OpnRcvd => {
                         self.send_mesh_peering_confirm(
                             our_address,
+                            mesh_id,
                             &addr,
                             local_aid,
                             local_link_id,
@@ -560,6 +572,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 } => {
                     self.send_mesh_peering_confirm(
                         our_address,
+                        mesh_id,
                         &addr,
                         local_aid,
                         local_link_id,
@@ -574,6 +587,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 } => {
                     self.send_mesh_peering_close(
                         our_address,
+                        mesh_id,
                         &addr,
                         local_link_id,
                         peer_link_id,
@@ -585,6 +599,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         } else {
             self.send_mesh_peering_close(
                 our_address,
+                mesh_id,
                 &addr,
                 packet_peer_link_id,
                 None,
@@ -600,6 +615,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         mesh_peering_confirm_frame: &MeshPeeringConfirmFrame<'_>,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
     ) -> Option<()> {
         debug!("mesh peering confirm");
         let addr = mesh_peering_confirm_frame.header.transmitter_address;
@@ -609,9 +625,10 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .get_first_element::<MeshPeeringManagement>()?
             .parse_as_confirm()?;
         let remote_aid = mesh_peering_confirm_frame.association_id;
-        if !self.does_mesh_sta_configuration_match(mesh_peering_confirm_frame.elements) {
+        if !self.does_mesh_sta_configuration_match(mesh_id, mesh_peering_confirm_frame.elements) {
             self.send_mesh_peering_close(
                 our_address,
+                mesh_id,
                 &addr,
                 mpm.peer_link_id.unwrap_or(0),
                 Some(mpm.local_link_id),
@@ -635,6 +652,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             MPMFSMState::Holding { .. } => {
                 self.send_mesh_peering_close(
                     our_address,
+                    mesh_id,
                     &addr,
                     mpm.peer_link_id.unwrap_or(0),
                     Some(mpm.local_link_id),
@@ -706,6 +724,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         mesh_peering_close_frame: &MeshPeeringCloseFrame<'_>,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
     ) -> Option<()> {
         debug!("mesh peering close rxd");
         let addr = mesh_peering_close_frame.header.transmitter_address;
@@ -714,7 +733,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
             .elements
             .get_first_element::<MeshPeeringManagement>()?
             .parse_as_close()?;
-        if !self.does_mesh_sta_configuration_match(mesh_peering_close_frame.elements) {
+        if !self.does_mesh_sta_configuration_match(mesh_id, mesh_peering_close_frame.elements) {
             // Let's not send a close frame, to avoid getting in an infinite loop
             return None;
         }
@@ -760,6 +779,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 });
                 self.send_mesh_peering_close(
                     our_address,
+                    mesh_id,
                     &addr,
                     local_link_id,
                     Some(mpm.local_link_id),
@@ -779,9 +799,10 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         beacon_frame: &BeaconFrame<'_>,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
     ) -> Option<()> {
         let peer_addr = beacon_frame.header.transmitter_address;
-        if !self.does_mesh_sta_configuration_match(beacon_frame.elements) {
+        if !self.does_mesh_sta_configuration_match(mesh_id, beacon_frame.elements) {
             return None;
         }
         debug!("rxd beacon");
@@ -827,7 +848,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 },
             )
         });
-        self.send_mesh_peering_open(our_address, &peer_addr, local_link_id)
+        self.send_mesh_peering_open(our_address, mesh_id, &peer_addr, local_link_id)
             .await;
 
         return None;
@@ -837,6 +858,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         &mut self,
         probe_request: &ProbeRequestFrame<'_>,
         our_address: &MACAddress,
+        mesh_id: &MeshIdStr,
     ) -> Option<()> {
         debug!("processing probe request");
         // Only process wildcard requests or mesh probe requests
@@ -868,7 +890,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                         current_channel: self.interface_control.home_channel().unwrap_or(1)
                     },
                     DEFAULT_XRATES,
-                    mesh_id!(MESH_ID),
+                    MeshIDElement::new(mesh_id).unwrap(),
                     self.generate_own_mesh_configuration_element()
                 },
                 _phantom: PhantomData,
@@ -892,7 +914,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         None
     }
 
-    async fn handle_timer_event(&mut self, our_address: &MACAddress) {
+    async fn handle_timer_event(&mut self, our_address: &MACAddress, mesh_id: &MeshIdStr) {
         debug!("timer event!");
         enum TimerEvent {
             TOR1 {
@@ -1003,7 +1025,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 local_link_id,
             } => {
                 debug!("TOR1");
-                self.send_mesh_peering_open(our_address, &destination, local_link_id)
+                self.send_mesh_peering_open(our_address, mesh_id, &destination, local_link_id)
                     .await;
             }
             TimerEvent::TOR2 {
@@ -1014,6 +1036,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 debug!("TOR2");
                 self.send_mesh_peering_close(
                     our_address,
+                    mesh_id,
                     &destination,
                     local_link_id,
                     peer_link_id,
@@ -1029,6 +1052,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                 debug!("TOC");
                 self.send_mesh_peering_close(
                     our_address,
+                    mesh_id,
                     &destination,
                     local_link_id,
                     peer_link_id,
@@ -1045,7 +1069,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         }
     }
 
-    pub async fn run(&mut self, our_address: &MACAddress) -> ! {
+    pub async fn run(&mut self, our_address: &MACAddress, mesh_id: &heapless::String<32>) -> ! {
         let mut beacon_ticker = Ticker::every(Duration::from_micros(
             BEACON_INTERVAL_TU * TU.as_micros() as u64,
         ));
@@ -1068,28 +1092,28 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
                     let _ = match_frames! {
                         buffer.mpdu_buffer(),
                         beacon_frame = BeaconFrame => {
-                            self.process_beacon_frame(&beacon_frame, our_address).await;
+                            self.process_beacon_frame(&beacon_frame, our_address, mesh_id).await;
                         }
                         mesh_peering_open_frame = MeshPeeringOpenFrame => {
-                            self.process_mesh_peering_open(&mesh_peering_open_frame, our_address).await;
+                            self.process_mesh_peering_open(&mesh_peering_open_frame, our_address, mesh_id).await;
                         }
                         mesh_peering_confirm_frame = MeshPeeringConfirmFrame => {
-                            self.process_mesh_peering_confirm(&mesh_peering_confirm_frame, our_address).await;
+                            self.process_mesh_peering_confirm(&mesh_peering_confirm_frame, our_address, mesh_id).await;
                         }
                         mesh_peering_close_frame = MeshPeeringCloseFrame => {
-                            self.process_mesh_peering_close(&mesh_peering_close_frame, our_address).await;
+                            self.process_mesh_peering_close(&mesh_peering_close_frame, our_address, mesh_id).await;
                         }
                         probe_request = ProbeRequestFrame => {
-                            self.process_probe_request(&probe_request, our_address).await;
+                            self.process_probe_request(&probe_request, our_address, mesh_id).await;
                         }
                     };
                 }
                 Either4::Third(_) => {
                     // Time to send a beacon frame
-                    self.send_beacon_frame(our_address).await;
+                    self.send_beacon_frame(our_address, mesh_id).await;
                 }
                 Either4::Fourth(_) => {
-                    self.handle_timer_event(our_address).await;
+                    self.handle_timer_event(our_address, mesh_id).await;
                 }
             }
         }

@@ -63,7 +63,7 @@ impl<'foa, 'vif, Rng: RngCore + Copy> MeshRunner<'foa, 'vif, Rng> {
 
         let our_address;
         let channel;
-        let mesh_id;
+        let mesh_id: heapless::String<32>;
         loop {
             let MeshState::Active {
                 our_address: our_address_,
@@ -81,7 +81,7 @@ impl<'foa, 'vif, Rng: RngCore + Copy> MeshRunner<'foa, 'vif, Rng> {
         }
 
         let _ = select3(
-            self.management_runner.run(&our_address),
+            self.management_runner.run(&our_address, &mesh_id),
             self.tx_runner.run(),
             self.rx_runner.run(),
         )
