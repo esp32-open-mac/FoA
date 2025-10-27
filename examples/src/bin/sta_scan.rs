@@ -17,7 +17,7 @@ macro_rules! mk_static {
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
         let x = STATIC_CELL.uninit().write(($val));
-        
+        x
     }};
 }
 
@@ -38,6 +38,7 @@ async fn main(_spawner: Spawner) {
     let sta_resources = mk_static!(StaResources, StaResources::default());
     let (mut sta_control, mut sta_runner, _net_device) =
         foa_sta::new_sta_interface(&mut sta_vif, sta_resources, Rng::new(peripherals.RNG));
+    info!("Starting scan.");
     join3(foa_runner.run(), sta_runner.run(), async {
         let mut found_bss = heapless::FnvIndexMap::new();
         let _ = sta_control.scan::<32>(None, &mut found_bss).await;
