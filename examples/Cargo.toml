@@ -30,7 +30,7 @@ embassy-executor = { version = "0.9.1", features = [
     "defmt",
 ] }
 
-foa = { path = "../foa", features = ["defmt"] }
+foa = { version = "0.1.0", path = "../foa", features = ["defmt"] }
 foa_sta = { path = "../foa_sta", features = ["defmt"] }
 foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
 

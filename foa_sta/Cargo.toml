@@ -1,7 +1,13 @@
 [package]
 name = "foa_sta"
 version = "0.1.0"
+authors = ["Frostie314159 <frostie.neuenhausen@gmail.com>"]
 edition = "2024"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+description = "A station mode implementation for Ferris-on-Air."
+homepage = "https://esp32-open-mac.be/"
+repository = "https://github.com/esp32-open-mac/FoA"
 
 [dependencies]
 defmt = { version = "1.0.1", optional = true }
