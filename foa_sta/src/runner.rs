@@ -185,7 +185,7 @@ impl ConnectionRunner<'_, '_> {
                         .ok()
                         .map(|written| (written, Some(key_slot)))
                 } else {
-                    tx_buf.pwrite(data_frame, 0).ok().zip(None)
+                    tx_buf.pwrite(data_frame, 0).ok().zip(Some(None))
                 })
             else {
                 continue;
@@ -358,7 +358,7 @@ impl RoutingRunner<'_, '_> {
             let Ok(generic_frame) = GenericFrame::new(borrowed_buffer.mpdu_buffer(), false) else {
                 continue;
             };
-            debug!("RX type: {:?}", generic_frame.frame_control_field().frame_type());
+            trace!("RX type: {:?}", generic_frame.frame_control_field().frame_type());
             let address_1 = generic_frame.address_1();
             // Here we toss out frames, where the first address doesn't meet one of these conditions:
             // 1. Is multicast

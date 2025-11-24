@@ -6,16 +6,16 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-hal = "=1.0.0-rc.0"
-esp-hal-embassy = "0.9.0"
-esp-backtrace = { version = "0.17.0", features = ["panic-handler", "defmt"] }
-esp-println = { version = "0.15.0", features = [
+esp-hal = "=1.0.0"
+esp-rtos = { version = "0.2.0", features = ["embassy"] }
+esp-backtrace = { version = "0.18.1", features = ["panic-handler", "defmt"] }
+esp-println = { version = "0.16.1", features = [
     "defmt-espflash",
     "critical-section",
     "uart",
 ], default-features = false }
 
-embassy-net = { version = "0.7.0", features = [
+embassy-net = { version = "0.7.1", features = [
     "proto-ipv4",
     "dhcpv4",
     "medium-ethernet",
@@ -25,9 +25,8 @@ embassy-net = { version = "0.7.0", features = [
     "defmt",
 ] }
 embassy-futures = { version = "0.1.1", features = ["defmt"] }
-embassy-time = { version = "0.4.0", features = ["defmt"] }
-embassy-executor = { version = "0.7.0", features = [
-    "task-arena-size-32768",
+embassy-time = { version = "0.5.0", features = ["defmt"] }
+embassy-executor = { version = "0.9.1", features = [
     "defmt",
 ] }
 
@@ -36,7 +35,7 @@ foa_sta = { path = "../foa_sta", features = ["defmt"] }
 foa_awdl = { path = "../foa_awdl", features = ["defmt"] }
 
 static_cell = "2.1.0"
-heapless = "0.8.0"
+heapless = "0.9.1"
 embedded-io-async = "0.6.1"
 
 defmt = "1.0.1"
@@ -45,9 +44,9 @@ reqwless = { version = "0.13.0", default-features = false, features = [
 ] }
 # esp-mbedtls = { git = "https://github.com/esp-rs/esp-mbedtls.git", default-features = false,  }
 rand_core = "0.9.3"
-embedded-io = "0.6.1"
-esp-alloc = "0.8.0"
-esp-bootloader-esp-idf = { version = "0.2.0", features = ["esp-rom-sys"] }
+embedded-io = "0.7.1"
+esp-alloc = "0.9.0"
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp-rom-sys"] }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -66,7 +65,7 @@ overflow-checks = false
 [features]
 esp32 = [
     "esp-hal/esp32",
-    "esp-hal-embassy/esp32",
+    "esp-rtos/esp32",
     "esp-println/esp32",
     "esp-backtrace/esp32",
     "esp-bootloader-esp-idf/esp32",
@@ -76,7 +75,7 @@ esp32 = [
 ]
 esp32s2 = [
     "esp-hal/esp32s2",
-    "esp-hal-embassy/esp32s2",
+    "esp-rtos/esp32s2",
     "esp-println/esp32s2",
     "esp-bootloader-esp-idf/esp32s2",
     "esp-backtrace/esp32s2",

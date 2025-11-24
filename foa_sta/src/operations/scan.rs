@@ -1,4 +1,5 @@
 use foa::util::operations::{PostChannelScanAction, ScanConfig};
+use heapless::index_map::FnvIndexMap;
 use ieee80211::{
     elements::DSSSParameterSetElement,
     mac_parser::MACAddress,
@@ -85,7 +86,7 @@ pub async fn enumerate_bss<'foa, 'vif, 'params, const MAX_BSS: usize>(
     sta_tx_rx: &'params StaTxRx<'foa, 'vif>,
     rx_router_endpoint: &'params mut StaRxRouterEndpoint<'foa, 'vif>,
     scan_config: Option<ScanConfig<'params>>,
-    bss_list: &'params mut heapless::FnvIndexMap<[u8; 6], BSS, MAX_BSS>,
+    bss_list: &'params mut FnvIndexMap<[u8; 6], BSS, MAX_BSS>,
 ) -> Result<(), StaError> {
     foa::util::operations::scan::<_, ()>(
         sta_tx_rx.interface_control,

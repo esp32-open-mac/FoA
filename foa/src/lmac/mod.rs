@@ -274,7 +274,7 @@ impl<'res> LMacInterfaceControl<'res> {
             .await
     }
     /// Allocate a [TxBuffer] from the buffer manager.
-    pub async fn alloc_tx_buf(&self) -> TxBuffer {
+    pub async fn alloc_tx_buf(&self) -> TxBuffer<'_> {
         self.dyn_tx_buffer_manager.alloc().await
     }
 

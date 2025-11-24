@@ -8,6 +8,7 @@ use embassy_net::{
     tcp::client::{TcpClient, TcpClientState},
     DhcpConfig, Runner as NetRunner, StackResources as NetStackResources,
 };
+use embassy_time::Timer;
 use embedded_io_async::Read;
 use esp_backtrace as _;
 use esp_hal::{
@@ -46,13 +47,22 @@ async fn sta_task(mut sta_runner: StaRunner<'static, 'static>) -> ! {
 async fn net_task(mut net_runner: NetRunner<'static, StaNetDevice<'static>>) -> ! {
     net_runner.run().await
 }
-#[esp_hal_embassy::main]
+#[embassy_executor::task]
+async fn bullshit() -> ! {
+    loop {
+        info!("I'm still standing.");
+        Timer::after_millis(500).await;
+    }
+}
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
     esp_bootloader_esp_idf::esp_app_desc!();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
+    esp_rtos::start(timg0.timer0);
+
+    // spawner.spawn(bullshit()).unwrap();
 
     let stack_resources = mk_static!(FoAResources, FoAResources::new());
     let ([sta_vif, ..], foa_runner) = foa::init(
@@ -66,7 +76,7 @@ async fn main(spawner: Spawner) {
     let (mut sta_control, sta_runner, net_device) = foa_sta::new_sta_interface(
         mk_static!(VirtualInterface<'static>, sta_vif),
         sta_resources,
-        Rng::new(peripherals.RNG),
+        Rng::new(),
     );
     spawner.spawn(sta_task(sta_runner)).unwrap();
 
@@ -112,6 +122,7 @@ async fn main(spawner: Spawner) {
         .with_rx(rx_pin)
         .with_tx(tx_pin)
         .into_async();
+    defmt::flush();
     loop {
         let mut request = http_client
             .request(Method::GET, "http://parrot.live/")
@@ -131,6 +142,7 @@ async fn main(spawner: Spawner) {
                 parrot_buffer,
             )
             .await;
+            let _ = uart.flush();
         }
     }
 }

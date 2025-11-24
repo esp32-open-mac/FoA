@@ -1,5 +1,6 @@
 //! This module provides control over the STA interface.
 
+use heapless::index_map::FnvIndexMap;
 use ieee80211::{common::AssociationID, mac_parser::MACAddress};
 
 use foa::{
@@ -58,7 +59,7 @@ impl<Rng: RngCore + Clone> StaControl<'_, '_, Rng> {
     pub async fn scan<'a, const MAX_ESS: usize>(
         &'a mut self,
         scan_config: Option<ScanConfig<'a>>,
-        found_bss: &'a mut heapless::FnvIndexMap<[u8; 6], BSS, MAX_ESS>,
+        found_bss: &'a mut FnvIndexMap<[u8; 6], BSS, MAX_ESS>,
     ) -> Result<(), StaError> {
         enumerate_bss(
             self.sta_tx_rx,

@@ -18,11 +18,11 @@ embassy-net = { version = "0.7.0", features = [
 ] }
 embassy-net-driver-channel = "0.3.0"
 embassy-sync = "0.7.0"
-embassy-time = "0.4.0"
+embassy-time = "0.5.0"
 esp-config = "0.4.0"
 ethernet = { version = "0.1.6", default-features = false }
 foa = { path = "../foa/" }
-heapless = "0.8.0"
+heapless = "0.9.1"
 llc-rs = "0.1.1"
 rand_core = "0.9.3"
 portable-atomic = "1.11.1"

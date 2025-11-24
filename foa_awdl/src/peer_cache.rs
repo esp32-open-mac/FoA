@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use defmt_or_log::debug;
 use embassy_time::Duration;
-use heapless::FnvIndexMap;
+use heapless::index_map::FnvIndexMap;
 use ieee80211::mac_parser::MACAddress;
 
 use crate::{
