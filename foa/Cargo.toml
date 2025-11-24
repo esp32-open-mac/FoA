@@ -1,7 +1,13 @@
 [package]
 name = "foa"
 version = "0.1.0"
+authors = ["Frostie314159 <frostie.neuenhausen@gmail.com>"]
 edition = "2024"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+description = "An experimental IEEE 802.11 (WLAN) stack for rust on the ESP32. "
+homepage = "https://esp32-open-mac.be/"
+repository = "https://github.com/esp32-open-mac/FoA"
 
 [dependencies]
 embassy-sync = "0.7.2"
