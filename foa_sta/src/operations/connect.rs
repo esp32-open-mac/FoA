@@ -35,13 +35,10 @@ use llc_rs::{EtherType, SnapLlcFrame};
 use rand_core::RngCore;
 
 use crate::{
-    operations::{scan::BSS, DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES},
-    rsn::{
+    operations::{scan::BSS, DEFAULT_SUPPORTED_RATES, DEFAULT_XRATES}, rsn::{
         Credentials, SecurityAssociations, TransientKeySecurityAssociation, GTK_LENGTH, PMK_LENGTH,
         PTK_LENGTH, WPA2_PSK_AKM,
-    },
-    rx_router::{StaRxRouterEndpoint, StaRxRouterOperation, StaRxRouterScopedOperation},
-    ConnectionConfig, CryptoState, SecurityConfig, StaError, StaTxRx,
+    }, rx_router::{StaRxRouterEndpoint, StaRxRouterOperation, StaRxRouterScopedOperation}, util::HexWrapper, ConnectionConfig, CryptoState, SecurityConfig, StaError, StaTxRx
 };
 
 pub struct ConnectionParameters<'a> {
@@ -267,20 +264,20 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             );
             return Err(StaError::FrameDeserializationFailed);
         };
-        if let Some(aid) = assoc_response.association_id {
-            if assoc_response.status_code == IEEE80211StatusCode::Success {
-                debug!(
-                    "Successfully associated with {}, AID: {:?}.",
-                    bss.bssid, aid
-                );
-                return Ok(aid);
-            }
+        if let Some(aid) = assoc_response.association_id
+            && assoc_response.status_code == IEEE80211StatusCode::Success
+        {
+            debug!(
+                "Successfully associated with {}, AID: {:?}.",
+                bss.bssid, aid
+            );
+            return Ok(aid);
         }
         debug!(
             "Failed to associate with {}, status: {:?}.",
             bss.bssid, assoc_response.status_code
         );
-        debug!("Assoc frame: {:02x}", response.mpdu_buffer());
+        debug!("Assoc frame: {}", HexWrapper(response.mpdu_buffer()));
         Err(StaError::AssociationFailure(assoc_response.status_code))
     }
     /// Wait for message 1 to arrive and process it accordingly.
@@ -305,8 +302,8 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
                 }
                 Err(error) => {
                     debug!(
-                        "Another error occured. Frame: {:02x} EAPOL len: {} Error: {}",
-                        frame.mpdu_buffer(),
+                        "Another error occured. Frame: {} EAPOL len: {} Error: {:?}",
+                        HexWrapper(frame.mpdu_buffer()),
                         frame.mpdu_buffer().len() - 24 - 8,
                         defmt_or_log::Debug2Format(&error)
                     );
@@ -380,7 +377,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
                     continue;
                 }
                 Err(_) => {
-                    debug!("Another error occured. Frame: {:02x}", frame.mpdu_buffer());
+                    debug!("Another error occured. Frame: {}", HexWrapper(frame.mpdu_buffer()));
                     continue;
                 }
             };
@@ -400,7 +397,7 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
             let Some(gtk_kde) = eapol_key_frame.key_data.get_first_element::<GtkKde>() else {
                 debug!(
                     "No GTK KDE present. Key Data: {}",
-                    eapol_key_frame.key_data.bytes
+                    HexWrapper(eapol_key_frame.key_data.bytes)
                 );
                 continue;
             };
@@ -457,16 +454,16 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         let mut supplicant_nonce = [0u8; 32];
         rng.fill_bytes(&mut supplicant_nonce);
         debug!(
-            "Starting 4WHS. PMK: {:02x}; SNonce: {:02x}",
-            pmk, supplicant_nonce
+            "Starting 4WHS. PMK: {}; SNonce: {}",
+            HexWrapper(&pmk), HexWrapper(&supplicant_nonce)
         );
         let mut key_replay_counter = 0;
 
         let authenticator_nonce =
             Self::process_message_1(router_operation, &mut key_replay_counter).await;
         debug!(
-            "Processed 4WHS message 1. ANonce: {:02x}",
-            authenticator_nonce
+            "Processed 4WHS message 1. ANonce: {}",
+            HexWrapper(&authenticator_nonce)
         );
 
         let mut ptk = TransientKeySecurityAssociation::new([0u8; PTK_LENGTH], 0);
@@ -486,8 +483,8 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         .unwrap();
         let (kck, kek): ([u8; 16], [u8; 16]) = (kck.try_into().unwrap(), kek.try_into().unwrap());
         debug!(
-            "Derived PTK. KCK: {:02x} KEK: {:02x}, TK: {:02x}",
-            kck, kek, tk
+            "Derived PTK. KCK: {} KEK: {}, TK: {}",
+            HexWrapper(&kck), HexWrapper(&kek), HexWrapper(tk)
         );
         //
         // We use a TX buffer as a general use buffer here.
@@ -512,8 +509,8 @@ impl<'foa, 'vif, 'params> ConnectionOperation<'foa, 'vif, 'params> {
         )
         .await;
         debug!(
-            "Processed 4WHS message 3. GTK: {:02x} GTK Key ID: {}",
-            gtk.key, gtk.key_id
+            "Processed 4WHS message 3. GTK: {} GTK Key ID: {}",
+            HexWrapper(&gtk.key), gtk.key_id
         );
 
         self.send_message_4(

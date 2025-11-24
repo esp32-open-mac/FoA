@@ -24,6 +24,7 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
   "socket-raw",
 ] }
 awdl-frame-parser = "0.4.1"
+log = { version = "0.4.28", optional = true }
 
 [build-dependencies]
 esp-config = { version = "0.4.0", features = ["build"] }
@@ -34,7 +35,7 @@ esp32 = ["foa/esp32"]
 esp32s2 = ["foa/esp32s2"]
 
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
-log = ["defmt-or-log/log"]
+log = ["dep:log", "foa/log", "defmt-or-log/log"]
 
 ndp-inject = []
 default = ["ndp-inject"]

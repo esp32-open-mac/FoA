@@ -97,7 +97,7 @@ pub async fn enumerate_bss<'foa, 'vif, 'params, const MAX_BSS: usize>(
             }
             if bss_list.len() == bss_list.capacity() {
                 trace!(
-                    "Can't add BSS with SSID: {} and BSSID: {} to scan result list. MAX_BSS: {}",
+                    "Can't add BSS with SSID: {:?} and BSSID: {} to scan result list. MAX_BSS: {}",
                     beacon_frame.ssid(),
                     beacon_frame.header.bssid,
                     MAX_BSS

@@ -13,6 +13,8 @@ use ieee80211::{
 };
 use portable_atomic::AtomicU64;
 
+use crate::util::HexWrapper;
+
 /// The length of a Pairwise Master Key.
 ///
 /// This is different for two AKMs, which we're luckily very far from implementing.
@@ -289,7 +291,7 @@ impl<'foa> CryptoState<'foa> {
                 KeyType::Pairwise,
             )
         };
-        debug!("TK: {:02x}", tk);
+        debug!("TK: {}", HexWrapper(tk));
         key_slot
             .set_key(
                 key_id,

@@ -33,6 +33,7 @@ llc-rs = "0.1.1"
 rand_core = "0.9.3"
 portable-atomic = "1.11.1"
 ieee80211 = "0.5.7"
+log = { version = "0.4.28", optional = true }
 
 [build-dependencies]
 esp-config = { version = "0.4.0", features = ["build"] }
@@ -41,5 +42,5 @@ esp-config = { version = "0.4.0", features = ["build"] }
 esp32 = ["foa/esp32"]
 esp32s2 = ["foa/esp32s2"]
 
-log = ["defmt-or-log/log"]
+log = ["dep:log", "foa/log", "defmt-or-log/log"]
 defmt = ["dep:defmt", "defmt-or-log/defmt", "foa/defmt"]

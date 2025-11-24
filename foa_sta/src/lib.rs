@@ -64,6 +64,7 @@ mod connection_state;
 pub use connection_state::ConnectionConfig;
 mod rsn;
 pub use rsn::{Credentials, SecurityConfig};
+mod util;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

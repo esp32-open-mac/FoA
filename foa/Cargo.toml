@@ -24,6 +24,7 @@ defmt = { version = "1.0.1", optional = true }
 embassy-time = "0.5.0"
 heapless = "0.9.1"
 ieee80211 = "0.5.9"
+log = { version = "0.4.28", optional = true }
 
 [build-dependencies]
 esp-config = { version = "0.6.0", features = ["build"] }
@@ -31,7 +32,7 @@ esp-config = { version = "0.6.0", features = ["build"] }
 [features]
 arc_buffers = []
 
-log = ["defmt-or-log/log", "esp-wifi-hal/log"]
+log = ["dep:log", "defmt-or-log/log", "esp-wifi-hal/log"]
 defmt = ["dep:defmt", "defmt-or-log/defmt", "esp-wifi-hal/defmt"]
 
 esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]

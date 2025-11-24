@@ -532,7 +532,7 @@ impl<'res> LMacInterfaceControl<'res> {
             .wifi
             .set_filter_status(bank, self.interface, enabled);
         trace!(
-            "{} {:?} filter for interface {}.",
+            "{:?} {:?} filter for interface {}.",
             bank,
             if enabled { "Enabled" } else { "Disabled" },
             self.interface
