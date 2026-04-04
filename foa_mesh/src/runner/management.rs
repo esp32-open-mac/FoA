@@ -4,11 +4,8 @@ use defmt_or_log::debug;
 use embassy_futures::select::{Either3, select3};
 use embassy_net_driver_channel::StateRunner as NetStateRunner;
 
-use foa::{
-    LMacInterfaceControl,
-    esp_wifi_hal::{TxErrorBehaviour, TxParameters, WiFiRate},
-};
-use rand_core::RngCore;
+use esp_hal::rng::Rng;
+use foa::{LMacInterfaceControl, RetryBehaviour, TxEndpoint, esp_wifi_hal::prelude::*};
 
 use crate::{
     peer_state::MeshPeerList,
@@ -21,7 +18,7 @@ use ieee80211::{
     common::{AssociationID, CapabilitiesInformation, IEEE80211Reason, TU},
     element_chain,
     elements::{
-        self, DSSSParameterSetElement, MeshIDElement, ReadElements,
+        DSSSParameterSetElement, MeshIDElement, ReadElements,
         mesh::{
             MeshCapability, MeshConfigurationActivePathSelectionMetricIdentifier,
             MeshConfigurationActivePathSelectionProtocolIdentifier,
@@ -70,15 +67,16 @@ const DEFAULT_XRATES: ExtendedSupportedRatesElement<[EncodedRate; 4]> =
 // TODO make this settable from the consumer of this library
 const MESH_ID: &str = "meshtest";
 
-pub struct MeshManagementRunner<'foa, 'vif, Rng: RngCore + Copy> {
+pub struct MeshManagementRunner<'foa, 'vif> {
     pub(crate) interface_control: &'vif LMacInterfaceControl<'foa>,
     pub(crate) rx_router_endpoint: MeshRxRouterEndpoint<'foa, 'vif>,
+    pub(crate) tx_endpoint: &'vif TxEndpoint<'foa>,
+
     pub(crate) net_state_runner: NetStateRunner<'vif>,
     pub(crate) common_resources: &'vif CommonResources,
-    pub(crate) rng: Rng,
 }
 
-impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
+impl MeshManagementRunner<'_, '_> {
     fn generate_own_mesh_configuration_element() -> MeshConfigurationElement {
         MeshConfigurationElement {
             active_path_selection_protocol_identifier:
@@ -105,7 +103,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         // Check if mesh profile is equal
         if (elements
             .get_first_element::<MeshIDElement>()
-            .map(|a| (a.ssid() != MESH_ID)))
+            .map(|a| a.ssid() != MESH_ID))
         .unwrap_or(true)
         {
             return false;
@@ -136,7 +134,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         // Check if all other fields of the mesh STA configuration matches
         if (elements
             .get_first_element::<SupportedRatesElement>()
-            .map(|a| (a != DEFAULT_SUPPORTED_RATES)))
+            .map(|a| a != DEFAULT_SUPPORTED_RATES))
         .unwrap_or(true)
         {
             debug!("default rates mismatch");
@@ -144,7 +142,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         }
         if elements
             .get_first_element::<ExtendedSupportedRatesElement>()
-            .map(|a| (a != DEFAULT_XRATES))
+            .map(|a| a != DEFAULT_XRATES)
             .unwrap_or(true)
         {
             debug!("extended rates mismatch");
@@ -155,7 +153,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
     }
 
     pub async fn send_beacon_frame(&mut self, address: &MACAddress) {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.tx_endpoint.alloc_tx_buf().await;
 
         // TODO this is currently only for 802.11bg, but not N
         // we could automatically adapt the contents of our beacon frames to other mesh stations
@@ -193,19 +191,21 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         };
 
         let written = tx_buffer.pwrite(beacon_frame, 0).unwrap();
-        let _ = self
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate12M,
-                    override_seq_num: true,
-                    tx_error_behaviour: TxErrorBehaviour::Drop,
-                    ..Default::default()
-                },
-                false,
-            )
-            .await;
+        let _ = self.tx_endpoint.transmit_edca(
+            EdcaAccessCategory::BestEffort,
+            tx_buffer,
+            written,
+            TxPlcpParameters {
+                rate: OfdmRate::Mbits12.into(),
+                ..Default::default()
+            },
+            TxMacParameters {
+                wait_for_ack: false,
+                override_seq_num: true,
+                ..Default::default()
+            },
+            RetryBehaviour::Drop,
+        );
     }
 
     pub async fn send_mesh_peering_confirm(
@@ -216,7 +216,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         local_link_id: u16,
         peer_link_id: u16,
     ) {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.tx_endpoint.alloc_tx_buf().await;
         let mesh_peering_confirm_frame = MeshPeeringConfirmFrame {
             header: ManagementFrameHeader {
                 receiver_address: *dst_address,
@@ -242,19 +242,21 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         };
 
         let written = tx_buffer.pwrite(mesh_peering_confirm_frame, 0).unwrap();
-        let _ = self
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate12M,
-                    override_seq_num: true,
-                    tx_error_behaviour: TxErrorBehaviour::Drop,
-                    ..Default::default()
-                },
-                false,
-            )
-            .await;
+        let _ = self.tx_endpoint.transmit_edca(
+            EdcaAccessCategory::BestEffort,
+            tx_buffer,
+            written,
+            TxPlcpParameters {
+                rate: OfdmRate::Mbits12.into(),
+                ..Default::default()
+            },
+            TxMacParameters {
+                wait_for_ack: true,
+                override_seq_num: true,
+                ..Default::default()
+            },
+            RetryBehaviour::default(),
+        );
     }
 
     pub async fn send_mesh_peering_open(
@@ -263,7 +265,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         dst_address: &MACAddress,
         local_link_id: u16,
     ) {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.tx_endpoint.alloc_tx_buf().await;
         let mesh_peering_confirm_frame = MeshPeeringOpenFrame {
             header: ManagementFrameHeader {
                 receiver_address: *dst_address,
@@ -288,19 +290,21 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         };
 
         let written = tx_buffer.pwrite(mesh_peering_confirm_frame, 0).unwrap();
-        let _ = self
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate12M,
-                    override_seq_num: true,
-                    tx_error_behaviour: TxErrorBehaviour::Drop,
-                    ..Default::default()
-                },
-                false,
-            )
-            .await;
+        let _ = self.tx_endpoint.transmit_edca(
+            EdcaAccessCategory::BestEffort,
+            tx_buffer,
+            written,
+            TxPlcpParameters {
+                rate: OfdmRate::Mbits12.into(),
+                ..Default::default()
+            },
+            TxMacParameters {
+                wait_for_ack: false,
+                override_seq_num: true,
+                ..Default::default()
+            },
+            RetryBehaviour::default(),
+        );
     }
 
     pub async fn send_mesh_peering_close(
@@ -311,7 +315,7 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         peer_link_id: Option<u16>,
         reason: IEEE80211Reason,
     ) {
-        let mut tx_buffer = self.interface_control.alloc_tx_buf().await;
+        let mut tx_buffer = self.tx_endpoint.alloc_tx_buf().await;
         let mesh_peering_close_frame = MeshPeeringCloseFrame {
             header: ManagementFrameHeader {
                 receiver_address: *dst_address,
@@ -333,24 +337,26 @@ impl<Rng: RngCore + Copy> MeshManagementRunner<'_, '_, Rng> {
         };
 
         let written = tx_buffer.pwrite(mesh_peering_close_frame, 0).unwrap();
-        let _ = self
-            .interface_control
-            .transmit(
-                &mut tx_buffer[..written],
-                &TxParameters {
-                    rate: WiFiRate::PhyRate12M,
-                    override_seq_num: true,
-                    tx_error_behaviour: TxErrorBehaviour::Drop,
-                    ..Default::default()
-                },
-                false,
-            )
-            .await;
+        let _ = self.tx_endpoint.transmit_edca(
+            EdcaAccessCategory::BestEffort,
+            tx_buffer,
+            written,
+            TxPlcpParameters {
+                rate: OfdmRate::Mbits12.into(),
+                ..Default::default()
+            },
+            TxMacParameters {
+                wait_for_ack: false,
+                override_seq_num: true,
+                ..Default::default()
+            },
+            RetryBehaviour::default(),
+        );
     }
 
     pub fn generate_new_link_id(&self) -> u16 {
         loop {
-            let candidate = u16::try_from(self.rng.clone().next_u32() & 0xFFFF).unwrap();
+            let candidate = u16::try_from(Rng::new().random() & 0xFFFF).unwrap();
             // Check if there is a link in our peer list that already has that ID
             if !self
                 .common_resources

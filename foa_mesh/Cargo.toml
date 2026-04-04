@@ -20,13 +20,14 @@ rand_core = "0.6.0"
 llc-rs = "0.1.0"
 ethernet = { version = "0.1.5", default-features = false }
 ieee80211 = "0.5.5"
+esp-hal = { version = "1.0.0", default-features = false }
 
 [build-dependencies]
 esp-config = { version = "0.3.1", features = ["build"] }
 
 [features]
-esp32 = ["foa/esp32"]
-esp32s2 = ["foa/esp32s2"]
+esp32 = ["foa/esp32", "esp-hal/esp32"]
+esp32s2 = ["foa/esp32s2", "esp-hal/esp32s2"]
 
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 log = ["defmt-or-log/log"]

@@ -1,4 +1,4 @@
-use foa::{LMacInterfaceControl, esp_wifi_hal::RxFilterBank};
+use foa::{LMacInterfaceControl, esp_wifi_hal::prelude::*};
 use ieee80211::mac_parser::MACAddress;
 
 use crate::{CommonResources, MeshError, rx_router::MeshRxRouterEndpoint, state::MeshState};
@@ -16,18 +16,13 @@ pub struct MeshControl<'foa, 'vif> {
 impl MeshControl<'_, '_> {
     /// Set and enable all filters required for the interface.
     fn enable_filters(&self) {
-        self.interface_control.set_filter_parameters(
-            RxFilterBank::ReceiverAddress,
-            *self.mac_address,
-            None,
-        );
         self.interface_control
-            .set_filter_status(RxFilterBank::ReceiverAddress, true);
+            .set_filter(RxFilterBank::ReceiverAddress, *self.mac_address);
     }
     /// Disable all filter for the interface.
     fn disable_filters(&self) {
         self.interface_control
-            .set_filter_status(RxFilterBank::ReceiverAddress, false);
+            .clear_filter(RxFilterBank::ReceiverAddress);
     }
     /// Start a Mesh session.
     ///

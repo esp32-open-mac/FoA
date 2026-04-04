@@ -2,7 +2,7 @@ use defmt_or_log::debug;
 use embassy_futures::select::select3;
 use embassy_net_driver_channel::Runner as NetRunner;
 
-use foa::{LMacInterfaceControl, RxQueueReceiver};
+use foa::{LMacInterfaceControl, RxEndpoint, TxEndpoint};
 use management::MeshManagementRunner;
 use rand_core::RngCore;
 use rx::MeshRxRunner;
@@ -18,30 +18,30 @@ mod management;
 mod rx;
 mod tx;
 
-pub struct MeshRunner<'foa, 'vif, Rng: RngCore + Copy> {
-    pub(crate) management_runner: MeshManagementRunner<'foa, 'vif, Rng>,
+pub struct MeshRunner<'foa, 'vif> {
+    pub(crate) management_runner: MeshManagementRunner<'foa, 'vif>,
     pub(crate) tx_runner: MeshTxRunner<'foa, 'vif>,
     pub(crate) rx_runner: MeshRxRunner<'foa, 'vif>,
     pub(crate) common_resources: &'vif CommonResources,
 }
-impl<'foa, 'vif, Rng: RngCore + Copy> MeshRunner<'foa, 'vif, Rng> {
+impl<'foa, 'vif> MeshRunner<'foa, 'vif> {
     pub(crate) fn new(
         net_runner: NetRunner<'vif, MTU>,
         background_endpoint: MeshRxRouterEndpoint<'foa, 'vif>,
         rx_router_input: MeshRxRouterInput<'foa, 'vif>,
-        interface_rx_queue_receiver: &'vif RxQueueReceiver<'foa>,
+        rx_endpoint: RxEndpoint<'foa, 'vif>,
+        tx_endpoint: &'vif TxEndpoint<'foa>,
         interface_control: &'vif LMacInterfaceControl<'foa>,
         common_resources: &'vif CommonResources,
-        rng: Rng,
     ) -> Self {
         let (net_state_runner, net_rx_runner, net_tx_runner) = net_runner.split();
         Self {
             management_runner: MeshManagementRunner {
                 interface_control,
                 rx_router_endpoint: background_endpoint,
+                tx_endpoint,
                 net_state_runner,
                 common_resources,
-                rng: rng.clone(),
             },
             tx_runner: MeshTxRunner {
                 interface_control,
@@ -50,7 +50,7 @@ impl<'foa, 'vif, Rng: RngCore + Copy> MeshRunner<'foa, 'vif, Rng> {
             },
             rx_runner: MeshRxRunner {
                 rx_router_input,
-                interface_rx_queue_receiver,
+                rx_endpoint,
                 net_rx_runner,
                 common_resources,
             },

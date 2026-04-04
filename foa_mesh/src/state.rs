@@ -116,24 +116,24 @@ impl CommonResources {
         }
     }
     /// Initialize the parameters for a new session.
-    pub fn initialize_session_parameters(&self, _channel: u8, _address: MACAddress) {
+    pub(crate) fn initialize_session_parameters(&self, _channel: u8, _address: MACAddress) {
         // TODO use _channel and _address
     }
     /// Acquire mutable access to the peer list in the closure.
-    pub fn lock_peer_list<O>(
+    pub(crate) fn lock_peer_list<O>(
         &self,
         f: impl FnOnce(RefMut<'_, MeshPeerListImplementation>) -> O,
     ) -> O {
         self.peer_list.lock(|peer_list| (f)(peer_list.borrow_mut()))
     }
 
-    pub fn new_association_id(&self) -> AssociationID {
-        let counter = self.association_id_ctr.update(|counter| {
+    pub(crate) fn new_association_id(&self) -> AssociationID {
+        self.association_id_ctr.update(|counter| {
             (counter + 1 % AssociationID::MAX_AID)
                 .clamp(AssociationID::MIN_AID, AssociationID::MAX_AID)
         });
 
-        AssociationID::new_checked(counter).unwrap()
+        AssociationID::new_checked(self.association_id_ctr.get()).unwrap()
     }
 }
 

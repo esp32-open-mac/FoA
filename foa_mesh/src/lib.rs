@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(cell_update)]
 
 mod control;
 pub mod peer_state;
@@ -11,7 +10,6 @@ use embassy_net_driver_channel::{Device as NetDevice, driver::HardwareAddress};
 use esp_config::esp_config_int;
 use foa::VirtualInterface;
 use ieee80211::mac_parser::MACAddress;
-use rand_core::RngCore;
 use state::{CommonResources, MeshResources};
 
 pub use {control::MeshControl, runner::MeshRunner};
@@ -30,20 +28,19 @@ pub enum MeshError {
     FailedToAcquireChannelLock,
 }
 
-pub fn new_mesh_interface<'foa, 'vif, Rng: RngCore + Copy>(
+pub fn new_mesh_interface<'foa, 'vif>(
     resources: &'vif mut MeshResources<'foa>,
     virtual_interface: &'vif mut VirtualInterface<'foa>,
     channel: u8,
     mesh_id: heapless::String<32>,
-    rng: Rng,
 ) -> (
     MeshControl<'foa, 'vif>,
-    MeshRunner<'foa, 'vif, Rng>,
+    MeshRunner<'foa, 'vif>,
     MeshNetDevice<'vif>,
 ) {
     virtual_interface.reset();
 
-    let (interface_control, interface_rx_queue_receiver) = virtual_interface.split();
+    let (interface_control, rx_endpoint, tx_endpoint) = virtual_interface.split();
     let (rx_router_input, [foreground_endpoint, background_endpoint]) = resources.rx_router.split();
     let (net_runner, net_device) = embassy_net_driver_channel::new(
         &mut resources.net_state,
@@ -62,10 +59,10 @@ pub fn new_mesh_interface<'foa, 'vif, Rng: RngCore + Copy>(
             net_runner,
             background_endpoint,
             rx_router_input,
-            interface_rx_queue_receiver,
+            rx_endpoint,
+            tx_endpoint,
             interface_control,
             &resources.common_resources,
-            rng.clone(),
         ),
         net_device,
     )
