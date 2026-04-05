@@ -698,7 +698,7 @@ dependencies = [
  "document-features",
  "embassy-net-driver",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "embedded-io-async 0.7.0",
  "embedded-nal-async",
  "heapless 0.9.2",
@@ -713,6 +713,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524eb3c489760508f71360112bca70f6e53173e6fe48fc5f0efd0f5ab217751d"
 dependencies = [
  "defmt 0.3.100",
+]
+
+[[package]]
+name = "embassy-net-driver-channel"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7b2739fbcf6cd206ae08779c7d709087b16577d255f2ea4a45bc4bbbf305b3f"
+dependencies = [
+ "embassy-futures",
+ "embassy-net-driver",
+ "embassy-sync 0.7.2",
 ]
 
 [[package]]
@@ -767,6 +778,22 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "heapless 0.9.2",
+]
+
+[[package]]
+name = "embassy-time"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f820157f198ada183ad62e0a66f554c610cdcd1a9f27d4b316358103ced7a1f8"
+dependencies = [
+ "cfg-if",
+ "critical-section",
+ "document-features",
+ "embassy-time-driver",
+ "embedded-hal 0.2.7",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "futures-util",
 ]
 
 [[package]]
@@ -1041,6 +1068,15 @@ dependencies = [
 
 [[package]]
 name = "esp-config"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "158dba334d3a2acd8d93873c0ae723ca1037cc78eefe5d6b4c5919b0ca28e38e"
+dependencies = [
+ "document-features",
+]
+
+[[package]]
+name = "esp-config"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c8c4c95d8d6243ddb39efe1fcf2524c9becd0f86bb3e24048ed30b4f553609f"
@@ -1254,7 +1290,7 @@ dependencies = [
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "esp-hal",
  "esp-phy",
  "esp-sync",
@@ -1382,7 +1418,7 @@ dependencies = [
  "embassy-futures",
  "embassy-net",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "esp-alloc",
@@ -1431,7 +1467,7 @@ dependencies = [
  "defmt-or-log",
  "embassy-futures",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "esp-config 0.6.1",
  "esp-hal",
  "esp-wifi-hal",
@@ -1450,9 +1486,9 @@ dependencies = [
  "defmt 1.0.1",
  "defmt-or-log",
  "embassy-futures",
- "embassy-net-driver-channel",
+ "embassy-net-driver-channel 0.4.0",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "esp-config 0.4.0",
  "esp-config 0.6.1",
  "esp-hal",
@@ -1472,13 +1508,14 @@ dependencies = [
  "defmt 0.3.100",
  "defmt-or-log",
  "embassy-futures",
- "embassy-net-driver-channel",
- "embassy-sync",
- "embassy-time",
- "esp-config",
+ "embassy-net-driver-channel 0.3.2",
+ "embassy-sync 0.6.2",
+ "embassy-time 0.4.0",
+ "esp-config 0.3.1",
+ "esp-hal",
  "ethernet",
  "foa",
- "heapless 0.8.0",
+ "heapless 0.9.2",
  "ieee80211",
  "llc-rs",
  "rand_core 0.6.4",
@@ -1492,9 +1529,9 @@ dependencies = [
  "defmt-or-log",
  "embassy-futures",
  "embassy-net-driver",
- "embassy-net-driver-channel",
+ "embassy-net-driver-channel 0.4.0",
  "embassy-sync 0.8.0",
- "embassy-time",
+ "embassy-time 0.5.1",
  "esp-config 0.6.1",
  "esp-hal",
  "ethernet",

@@ -8,9 +8,8 @@ use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
 use esp_println as _;
 use foa::{FoAResources, FoARunner, VirtualInterface};
-use foa_mesh::state::MeshResources;
 use foa_mesh::MeshRunner;
-use heapless::String;
+use foa_mesh::state::MeshResources;
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -22,31 +21,26 @@ macro_rules! mk_static {
 }
 
 #[embassy_executor::task]
-async fn foa_task(mut runner: FoARunner<'static>) -> ! {
+async fn foa_task(mut runner: FoARunner<'static>) {
     runner.run().await;
 }
 #[embassy_executor::task]
-async fn mesh_task(mut runner: MeshRunner<'static, 'static, Rng>) -> ! {
+async fn mesh_task(mut runner: MeshRunner<'static, 'static>) -> ! {
     runner.run().await
 }
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
     info!("Welcome!");
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     info!("Embassy!");
-    esp_hal_embassy::init(timg0.timer0);
+    esp_rtos::start(timg0.timer0);
     info!("After embassy!");
 
     let foa_resources = mk_static!(FoAResources, FoAResources::new());
-    let ([mesh_vif, ..], foa_runner) = foa::init(
-        foa_resources,
-        peripherals.WIFI,
-        peripherals.RADIO_CLK,
-        peripherals.ADC2,
-    );
+    let ([mesh_vif, ..], foa_runner) = foa::init(foa_resources, peripherals.WIFI);
     spawner.spawn(foa_task(foa_runner)).unwrap();
     let mesh_vif = mk_static!(VirtualInterface<'static>, mesh_vif);
     let mesh_resources = mk_static!(MeshResources, MeshResources::new());
@@ -55,8 +49,7 @@ async fn main(spawner: Spawner) {
         mesh_resources,
         mesh_vif,
         2,
-        String::try_from("meshtest").unwrap(),
-        Rng::new(peripherals.RNG),
+        heapless::String::try_from("meshtest").unwrap(),
     );
     info!("Before spawn!");
     spawner.spawn(mesh_task(mesh_runner)).unwrap();

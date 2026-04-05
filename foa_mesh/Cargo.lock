@@ -952,7 +952,7 @@ dependencies = [
  "esp-hal",
  "ethernet",
  "foa",
- "heapless 0.8.0",
+ "heapless 0.9.2",
  "ieee80211",
  "llc-rs",
  "rand_core 0.6.4",

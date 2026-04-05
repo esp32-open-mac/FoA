@@ -14,7 +14,7 @@ foa = { path = "../foa/" }
 defmt = { version = "0.3.10", optional = true }
 defmt-or-log = { version = "0.2.1", default-features = false }
 esp-config = "0.3.1"
-heapless = "0.8.0"
+heapless = "0.9.1"
 rand_core = "0.6.0"
 
 llc-rs = "0.1.0"
@@ -31,5 +31,3 @@ esp32s2 = ["foa/esp32s2", "esp-hal/esp32s2"]
 
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 log = ["defmt-or-log/log"]
-
-
