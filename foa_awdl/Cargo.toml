@@ -34,6 +34,7 @@ esp-config = { workspace = true, features = ["build"] }
 alloc = []
 esp32 = ["foa/esp32"]
 esp32s2 = ["foa/esp32s2"]
+esp32c3 = ["foa/esp32c3", "esp-hal/esp32c3"]
 
 defmt = ["dep:defmt", "defmt-or-log/defmt", "ieee80211/defmt", "foa/defmt"]
 log = ["dep:log", "foa/log", "defmt-or-log/log"]
