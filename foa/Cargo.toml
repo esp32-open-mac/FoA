@@ -45,3 +45,4 @@ defmt = [
 
 esp32 = ["esp-hal/esp32", "esp-wifi-hal/esp32"]
 esp32s2 = ["esp-hal/esp32s2", "esp-wifi-hal/esp32s2"]
+esp32c3 = ["esp-hal/esp32c3", "esp-wifi-hal/esp32c3"]

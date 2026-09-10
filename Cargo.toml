@@ -38,3 +38,8 @@ lto = 'fat'
 opt-level = 's'
 overflow-checks = false
 
+[patch.crates-io]
+# esp-wifi-hal with ESP32-C3 support (esp32-open-mac/esp-wifi-hal pull request) and the esp32c3
+# PAC with the Wi-Fi MAC register block (esp-rs/esp-pacs#510, rebased onto the 0.32.3 release).
+esp-wifi-hal = { git = "https://github.com/okhsunrog/esp-wifi-hal.git", rev = "e65264ae992a02a4d776b33ad3e3784cf8f33260" }
+esp32c3 = { git = "https://github.com/okhsunrog/esp-pacs.git", rev = "9be190016260ef195c97f7aa5aa7c576a1646890" }

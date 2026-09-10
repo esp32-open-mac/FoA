@@ -69,3 +69,13 @@ esp32s2 = [
     "foa_sta/esp32s2",
     "foa_awdl/esp32s2",
 ]
+esp32c3 = [
+    "esp-hal/esp32c3",
+    "esp-rtos/esp32c3",
+    "esp-println/esp32c3",
+    "esp-backtrace/esp32c3",
+    "esp-bootloader-esp-idf/esp32c3",
+    "foa/esp32c3",
+    "foa_sta/esp32c3",
+    "foa_awdl/esp32c3",
+]

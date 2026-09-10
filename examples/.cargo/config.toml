@@ -1,6 +1,9 @@
 [target.'cfg(any(target_arch = "xtensa", target_arch = "riscv"))']
 runner = "espflash flash --monitor -S"
 
+[target.riscv32imc-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tdefmt.x"]
+
 [build]
 target = ["xtensa-esp32-none-elf", "xtensa-esp32s2-none-elf"]
 
